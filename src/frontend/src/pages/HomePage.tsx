@@ -54,10 +54,10 @@ const HomePage: React.FC = () => {
                             "success"
                         );
                     } else {
-                        // Fallback: if we can't find the specific team, use HR team or first available
+                        // Fallback: if we can't find the specific team, use Simple Invoice team or first available
                         console.log('Specific team not found, using default selection logic');
-                        const hrTeam = teams.find(team => team.name === "Human Resources Team");
-                        const defaultTeam = hrTeam || teams[0];
+                        const simpleInvoiceTeam = teams.find(team => team.name === "Simple Invoice Team");
+                        const defaultTeam = simpleInvoiceTeam || teams[0];
 
                         if (defaultTeam) {
                             setSelectedTeam(defaultTeam);

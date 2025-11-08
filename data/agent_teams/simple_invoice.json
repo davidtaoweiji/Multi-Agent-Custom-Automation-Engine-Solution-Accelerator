@@ -1,0 +1,84 @@
+{
+  "id": "5",
+  "team_id": "team-5",
+  "name": "Simple Invoice Team",
+  "status": "visible",
+  "created": "",
+  "created_by": "",
+  "agents": [
+    {
+      "input_key": "",
+      "type": "",
+      "name": "SimpleInvoiceAgent",
+      "deployment_name": "gpt-4o",
+      "icon": "",
+      "system_message": "You are an intelligent invoice processing assistant. You can analyze text and images to help with invoice processing, data extraction, validation, and payment workflows. You can understand invoice documents, extract key information, validate data, and provide guidance on invoice processing workflows. You support both text descriptions and visual analysis of invoice images.",
+      "description": "A simple AI agent for invoice processing that supports text and image analysis without Azure AI Foundry registration.",
+      "use_rag": false,
+      "use_mcp": false,
+      "use_bing": false,
+      "use_reasoning": false,
+      "use_simple_chat": true,
+      "index_name": "",
+      "index_foundry_name": "",
+      "index_endpoint": "",
+      "coding_tools": false
+    },
+    {
+      "input_key": "",
+      "type": "",
+      "name": "SimpleDocumentAnalyzer",
+      "deployment_name": "gpt-4o",
+      "icon": "",
+      "system_message": "You are a document analysis specialist focused on financial documents. You can analyze both text descriptions and images of documents like invoices, receipts, contracts, and purchase orders. You extract key information, validate document structure, and provide detailed analysis of document content. You excel at understanding visual layouts and extracting structured data from unstructured documents.",
+      "description": "A simple AI agent for document analysis that supports multimodal input (text and images) for financial document processing.",
+      "use_rag": false,
+      "use_mcp": false,
+      "use_bing": false,
+      "use_reasoning": false,
+      "use_simple_chat": true,
+      "index_name": "",
+      "index_foundry_name": "",
+      "index_endpoint": "",
+      "coding_tools": false
+    },
+    {
+      "input_key": "",
+      "type": "",
+      "name": "ProxyAgent",
+      "deployment_name": "",
+      "icon": "",
+      "system_message": "",
+      "description": "",
+      "use_rag": false,
+      "use_mcp": false,
+      "use_bing": false,
+      "use_reasoning": false,
+      "index_name": "",
+      "index_foundry_name": "",
+      "coding_tools": false
+    }
+  ],
+  "protected": false,
+  "description": "Team focused on simple invoice and document processing with text and image support, without Azure AI Foundry registration.",
+  "logo": "",
+  "plan": "",
+  "starting_tasks": [
+    {
+      "id": "task-1",
+      "name": "Analyze Invoice",
+      "prompt": "Please analyze this invoice and extract key information like vendor, amount, date, and line items",
+      "created": "",
+      "creator": "",
+      "logo": ""
+    },
+    {
+      "id": "task-2",
+      "name": "Process Document Image",
+      "prompt": "I have an invoice image that needs to be processed. Can you help me extract the key information?",
+      "created": "",
+      "creator": "",
+      "logo": ""
+    }
+  ]
+}

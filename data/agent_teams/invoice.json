@@ -1,0 +1,81 @@
+{
+  "id": "4",
+  "team_id": "team-4",
+  "name": "Invoice Team",
+  "status": "visible",
+  "created": "",
+  "created_by": "",
+  "agents": [
+    {
+      "input_key": "",
+      "type": "",
+      "name": "InvoiceHelperAgent",
+      "deployment_name": "gpt-4o",
+      "icon": "",
+      "system_message": "You are an invoice management specialist. You help with invoice processing, payment tracking, billing inquiries, and general invoice-related questions. You provide accurate and helpful responses about invoice procedures, payment terms, and billing processes. If you need more information to provide accurate assistance, ask for clarification.",
+      "description": "An agent that assists with invoice management, payment processing, billing inquiries, and general invoice-related tasks.",
+      "use_rag": false,
+      "use_mcp": false,
+      "use_bing": false,
+      "use_reasoning": false,
+      "index_name": "",
+      "index_foundry_name": "",
+      "index_endpoint": "",
+      "coding_tools": false
+    },
+    {
+      "input_key": "",
+      "type": "",
+      "name": "BillingAnalystAgent",
+      "deployment_name": "gpt-4o",
+      "icon": "",
+      "system_message": "You are a billing analysis expert. You help analyze billing patterns, review payment histories, identify discrepancies, and provide insights on billing data. You assist with billing reports, payment reconciliation, and financial analysis related to invoicing. If you need more information to provide accurate analysis, ask for clarification.",
+      "description": "An agent that specializes in billing analysis, payment pattern review, and financial insights related to invoice management.",
+      "use_rag": false,
+      "use_mcp": false,
+      "use_bing": false,
+      "use_reasoning": false,
+      "index_name": "",
+      "index_foundry_name": "",
+      "coding_tools": false
+    },
+    {
+      "input_key": "",
+      "type": "",
+      "name": "ProxyAgent",
+      "deployment_name": "",
+      "icon": "",
+      "system_message": "",
+      "description": "",
+      "use_rag": false,
+      "use_mcp": false,
+      "use_bing": false,
+      "use_reasoning": false,
+      "index_name": "",
+      "index_foundry_name": "",
+      "coding_tools": false
+    }
+  ],
+  "protected": false,
+  "description": "Team focused on invoice management, billing analysis, and payment processing.",
+  "logo": "",
+  "plan": "",
+  "starting_tasks": [
+    {
+      "id": "task-1",
+      "name": "Process Invoice Inquiry",
+      "prompt": "Help me understand my recent invoice #12345",
+      "created": "",
+      "creator": "",
+      "logo": ""
+    },
+    {
+      "id": "task-2",
+      "name": "Payment Status Check",
+      "prompt": "Check the payment status for invoice #67890",
+      "created": "",
+      "creator": "",
+      "logo": ""
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 """Orchestration manager to handle the orchestration logic."""
 import asyncio
 import logging
+import os
 import uuid
 from typing import List, Optional
 
@@ -97,6 +98,16 @@ class OrchestrationManager:
         cls, user_id: str, team_config: TeamConfiguration, team_switched: bool
     ) -> MagenticOrchestration:  # add team_switched: bool parameter
         """get existing orchestration instance."""
+        
+        # Check if agent initialization should be skipped for faster startup
+        skip_agent_init = os.getenv("SKIP_AGENT_INITIALIZATION", "false").lower() == "true"
+        
+        if skip_agent_init:
+            cls.logger.info(f"⚡ Skipping agent initialization for faster startup (user: {user_id})")
+            # Store team config for later use when agents are actually needed
+            orchestration_config.team_configs[user_id] = team_config
+            return None  # Return None to indicate no orchestration is ready yet
+        
         current_orchestration = orchestration_config.get_current_orchestration(user_id)
         if (
             current_orchestration is None or team_switched
@@ -108,11 +119,38 @@ class OrchestrationManager:
                             await agent.close()
                         except Exception as e:
                             cls.logger.error("Error closing agent: %s", e)
+            
+            cls.logger.info(f"🔄 Creating agents for user {user_id}...")
             factory = MagenticAgentFactory()
             agents = await factory.get_agents(user_id=user_id, team_config_input=team_config)
             orchestration_config.orchestrations[user_id] = await cls.init_orchestration(
                 agents, user_id
             )
+            cls.logger.info(f"✅ Agents created successfully for user {user_id}")
+        return orchestration_config.get_current_orchestration(user_id)
+
+    @classmethod 
+    async def ensure_orchestration_ready(cls, user_id: str) -> MagenticOrchestration:
+        """
+        Ensure that orchestration is ready for the user, creating agents if needed.
+        This is used when SKIP_AGENT_INITIALIZATION is enabled.
+        """
+        current_orchestration = orchestration_config.get_current_orchestration(user_id)
+        
+        if current_orchestration is None:
+            # Check if we have a stored team config for lazy loading
+            team_config = orchestration_config.team_configs.get(user_id)
+            if team_config is None:
+                raise ValueError(f"No team configuration found for user {user_id}")
+            
+            cls.logger.info(f"🔄 Lazy loading agents for user {user_id}...")
+            factory = MagenticAgentFactory()
+            agents = await factory.get_agents(user_id=user_id, team_config_input=team_config)
+            orchestration_config.orchestrations[user_id] = await cls.init_orchestration(
+                agents, user_id
+            )
+            cls.logger.info(f"✅ Agents lazy loaded successfully for user {user_id}")
+            
         return orchestration_config.get_current_orchestration(user_id)
 
     async def run_orchestration(self, user_id, input_task) -> None:
@@ -123,7 +161,8 @@ class OrchestrationManager:
         # Use the new event-driven method to set approval as pending
         orchestration_config.set_approval_pending(job_id)
 
-        magentic_orchestration = orchestration_config.get_current_orchestration(user_id)
+        # Ensure orchestration is ready (lazy load agents if needed)
+        magentic_orchestration = await self.ensure_orchestration_ready(user_id)
 
         if magentic_orchestration is None:
             raise ValueError("Orchestration not initialized for user.")

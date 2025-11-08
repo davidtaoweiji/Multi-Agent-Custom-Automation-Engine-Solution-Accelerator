@@ -29,7 +29,7 @@ class AppConfig:
         self.COSMOSDB_DATABASE = self._get_optional("COSMOSDB_DATABASE")
         self.COSMOSDB_CONTAINER = self._get_optional("COSMOSDB_CONTAINER")
 
-        self.APPLICATIONINSIGHTS_CONNECTION_STRING = self._get_required(
+        self.APPLICATIONINSIGHTS_CONNECTION_STRING = self._get_optional(
             "APPLICATIONINSIGHTS_CONNECTION_STRING"
         )
         self.APP_ENV = self._get_required("APP_ENV", "prod")
@@ -45,15 +45,17 @@ class AppConfig:
             "AZURE_MANAGEMENT_SCOPE", "https://management.azure.com/.default"
         )
 
+        self.AZURE_OPENAI_API_KEY = self._get_required("AZURE_OPENAI_API_KEY")
+       
         # Azure OpenAI settings
         self.AZURE_OPENAI_DEPLOYMENT_NAME = self._get_required(
             "AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"
         )
         self.AZURE_OPENAI_API_VERSION = self._get_required(
-            "AZURE_OPENAI_API_VERSION", "2024-11-20"
+            "AZURE_OPENAI_API_VERSION", "2025-01-01-preview"
         )
         self.AZURE_OPENAI_ENDPOINT = self._get_required("AZURE_OPENAI_ENDPOINT")
-        self.REASONING_MODEL_NAME = self._get_optional("REASONING_MODEL_NAME", "o3")
+        self.REASONING_MODEL_NAME = self._get_optional("REASONING_MODEL_NAME", "gpt-4o")
         # self.AZURE_BING_CONNECTION_NAME = self._get_optional(
         #     "AZURE_BING_CONNECTION_NAME"
         # )

@@ -10,6 +10,7 @@ from common.config.app_config import config
 from common.models.messages_kernel import TeamConfiguration
 from v3.magentic_agents.foundry_agent import FoundryAgentTemplate
 from v3.magentic_agents.models.agent_models import MCPConfig, SearchConfig
+from v3.magentic_agents.simple_chat_agent import SimpleChatAgent
 
 # from v3.magentic_agents.models.agent_models import (BingConfig, MCPConfig,
 #                                                     SearchConfig)
@@ -39,7 +40,7 @@ class MagenticAgentFactory:
     #         data = json.load(f)
     #     return json.loads(json.dumps(data), object_hook=lambda d: SimpleNamespace(**d))
 
-    async def create_agent_from_config(self, user_id: str, agent_obj: SimpleNamespace) -> Union[FoundryAgentTemplate, ReasoningAgentTemplate, ProxyAgent]:
+    async def create_agent_from_config(self, user_id: str, agent_obj: SimpleNamespace) -> Union[FoundryAgentTemplate, ReasoningAgentTemplate, ProxyAgent, SimpleChatAgent]:
         """
         Create an agent from configuration object.
 
@@ -69,6 +70,35 @@ class MagenticAgentFactory:
             raise UnsupportedModelError(
                 f"Model '{deployment_name}' not supported. Supported: {supported_models}"
             )
+
+        # Check if this should be a simple chat agent (no tools, no foundry registration)
+        use_simple_chat = getattr(agent_obj, "use_simple_chat", False)
+        
+        # Check for any tool usage that would require Foundry agents
+        has_tools = (
+            getattr(agent_obj, "use_rag", False) or 
+            getattr(agent_obj, "use_mcp", False) or 
+            getattr(agent_obj, "use_bing", False) or 
+            getattr(agent_obj, "coding_tools", False)
+        )
+        
+        # If no tools are used and use_simple_chat is True, use SimpleChatAgent
+        if use_simple_chat and not has_tools:
+            self.logger.info(
+                f"Creating SimpleChatAgent '{agent_obj.name}' with model '{deployment_name}'"
+            )
+            
+            agent = SimpleChatAgent(
+                agent_name=agent_obj.name,
+                agent_description=getattr(agent_obj, "description", ""),
+                system_message=getattr(agent_obj, "system_message", ""),
+                model_deployment_name=deployment_name,
+                user_id=user_id,
+            )
+            
+            await agent.open()
+            self.logger.info(f"Successfully created and initialized SimpleChatAgent '{agent_obj.name}'")
+            return agent
 
         # Determine which template to use
         use_reasoning = deployment_name.startswith("o")

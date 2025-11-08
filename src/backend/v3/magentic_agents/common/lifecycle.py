@@ -2,7 +2,7 @@ from contextlib import AsyncExitStack
 from typing import Any
 
 from azure.ai.projects.aio import AIProjectClient
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential  # Use sync version for credential
 from semantic_kernel.agents.azure_ai.azure_ai_agent import AzureAIAgent
 from semantic_kernel.connectors.mcp import MCPStreamableHttpPlugin
 from v3.magentic_agents.models.agent_models import MCPConfig
@@ -106,8 +106,9 @@ class AzureAgentBase(MCPEnabledBase):
             return self
         self._stack = AsyncExitStack()
         # Azure async contexts
+        # Use sync credential (no need to enter async context)
         self.creds = DefaultAzureCredential()
-        await self._stack.enter_async_context(self.creds)
+        
         self.client = AzureAIAgent.create_client(credential=self.creds)
         await self._stack.enter_async_context(self.client)
 
@@ -144,7 +145,8 @@ class AzureAgentBase(MCPEnabledBase):
         # Always close credentials and parent resources
         try:
             if hasattr(self, 'creds') and self.creds:
-                await self.creds.close()
+                # Sync credential doesn't need await
+                pass
         except Exception:
             pass
         await super().close()

@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Local imports
 from middleware.health_check import HealthCheckMiddleware
-from v3.api.router import app_v3
+from v3.api.router import app_v3, simple_chat_handler
 
 # Azure monitoring
 
@@ -34,9 +34,13 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("🛑 Shutting down MACAE application...")
     try:
+        # Clean up SimpleChatHandler cached agents
+        await simple_chat_handler.cleanup_agents()
+        logger.info("✅ SimpleChatHandler cleanup completed successfully")
+        
         # Clean up all agents from Azure AI Foundry when container stops
         await agent_registry.cleanup_all_agents()
-        logger.info("✅ Agent cleanup completed successfully")
+        logger.info("✅ Agent registry cleanup completed successfully")
 
     except ImportError as ie:
         logger.error(f"❌ Could not import agent_registry: {ie}")

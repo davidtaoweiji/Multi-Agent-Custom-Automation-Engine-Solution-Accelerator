@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 from typing import Optional
 
@@ -34,6 +35,10 @@ from v3.config.settings import (
     team_config,
 )
 from v3.orchestration.orchestration_manager import OrchestrationManager
+from v3.api.simple_chat_handler import SimpleChatHandler
+
+# Global instance for agent caching and reuse
+simple_chat_handler = SimpleChatHandler()
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -99,9 +104,10 @@ async def init_team(
     # Need to store this user state in cosmos db, retrieve it here, and initialize the team
     # current in-memory store is in team_config from settings.py
     # For now I will set the initial install team ids as 00000000-0000-0000-0000-000000000001 (HR),
-    # 00000000-0000-0000-0000-000000000002 (Marketing), and 00000000-0000-0000-0000-000000000003 (Retail),
-    # and use this value to initialize to HR each time.
-    init_team_id = "00000000-0000-0000-0000-000000000001"
+    # 00000000-0000-0000-0000-000000000002 (Marketing), 00000000-0000-0000-0000-000000000003 (Retail),
+    # 00000000-0000-0000-0000-000000000004 (Invoice), 00000000-0000-0000-0000-000000000005 (Simple Invoice),
+    # and use this value to initialize to Simple Invoice each time.
+    init_team_id = "00000000-0000-0000-0000-000000000005"
     print(f"Init team called, team_switched={team_switched}")
     try:
         authenticated_user = get_authenticated_user_details(
@@ -143,12 +149,18 @@ async def init_team(
         )
 
         # Initialize agent team for this user session
-        await OrchestrationManager.get_current_or_new_orchestration(
+        orchestration = await OrchestrationManager.get_current_or_new_orchestration(
             user_id=user_id, team_config=team_configuration, team_switched=team_switched
         )
+        
+        # Check if agent initialization was skipped
+        skip_agent_init = os.getenv("SKIP_AGENT_INITIALIZATION", "false").lower() == "true"
+        status_message = "Request started successfully"
+        if skip_agent_init:
+            status_message += " (agents will be loaded on first use)"
 
         return {
-            "status": "Request started successfully",
+            "status": status_message,
             "team_id": init_team_id,
             "team": team_configuration,
         }
@@ -300,20 +312,35 @@ async def process_request(
         raise HTTPException(status_code=500, detail="Failed to create plan")
 
     try:
-        # background_tasks.add_task(
-        #     lambda: current_context.run(lambda:OrchestrationManager().run_orchestration, user_id, input_task)
-        # )
+        # Check if this team uses SimpleChatAgent for direct response
+        is_simple_chat = await simple_chat_handler.is_simple_chat_team(user_id)
+        
+        if is_simple_chat:
+            # Use direct SimpleChatAgent response (faster, no orchestration)
+            async def run_simple_chat_task():
+                await simple_chat_handler.handle_simple_chat_request(user_id, input_task)
+            
+            background_tasks.add_task(run_simple_chat_task)
+            
+            return {
+                "plan_id": plan_id,
+                "status": "Simple chat request started successfully",
+                "session_id": input_task.session_id,
+                "processing_mode": "simple_chat"
+            }
+        else:
+            # Use traditional multi-agent orchestration
+            async def run_orchestration_task():
+                await OrchestrationManager().run_orchestration(user_id, input_task)
 
-        async def run_orchestration_task():
-            await OrchestrationManager().run_orchestration(user_id, input_task)
+            background_tasks.add_task(run_orchestration_task)
 
-        background_tasks.add_task(run_orchestration_task)
-
-        return {
-            "status": "Request started successfully",
-            "session_id": input_task.session_id,
-            "plan_id": plan_id,
-        }
+            return {
+                "plan_id": plan_id,
+                "status": "Request started successfully",
+                "session_id": input_task.session_id,
+                "processing_mode": "orchestration"
+            }
 
     except Exception as e:
         track_event_if_configured(

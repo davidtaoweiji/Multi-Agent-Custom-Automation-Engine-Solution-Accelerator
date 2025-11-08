@@ -46,9 +46,11 @@ directory_path = os.path.abspath(directory_path)
 print(f"Scanning directory: {directory_path}")
 
 files_to_process = [
-    ("hr.json", "00000000-0000-0000-0000-000000000001"),
-    ("marketing.json", "00000000-0000-0000-0000-000000000002"),
-    ("retail.json", "00000000-0000-0000-0000-000000000003"),
+    # ("hr.json", "00000000-0000-0000-0000-000000000001"),
+    # ("marketing.json", "00000000-0000-0000-0000-000000000002"),
+    # ("retail.json", "00000000-0000-0000-0000-000000000003"),
+    # ("invoice.json", "00000000-0000-0000-0000-000000000004"),
+    ("simple_invoice.json", "00000000-0000-0000-0000-000000000005"),
 ]
 
 upload_endpoint = backend_url.rstrip('/') + '/api/v3/upload_team_config'

@@ -82,6 +82,7 @@ class OrchestrationConfig:
         self.approvals: Dict[str, bool] = {}  # m_plan_id -> approval status
         self.sockets: Dict[str, WebSocket] = {}  # user_id -> WebSocket
         self.clarifications: Dict[str, str] = {}  # m_plan_id -> clarification response
+        self.team_configs: Dict[str, TeamConfiguration] = {}  # user_id -> team configuration (for lazy loading)
         self.max_rounds: int = (
             20  # Maximum number of replanning rounds 20 needed to accommodate complex tasks
         )

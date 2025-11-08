@@ -460,6 +460,7 @@ dependencies = [
     { name = "pytest-cov" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "requests" },
     { name = "semantic-kernel" },
     { name = "uvicorn" },
 ]
@@ -491,6 +492,7 @@ requires-dist = [
     { name = "pytest-cov", specifier = "==5.0.0" },
     { name = "python-dotenv", specifier = "==1.1.1" },
     { name = "python-multipart", specifier = "==0.0.20" },
+    { name = "requests", specifier = ">=2.32.5" },
     { name = "semantic-kernel", specifier = "==1.35.3" },
     { name = "uvicorn", specifier = "==0.35.0" },
 ]

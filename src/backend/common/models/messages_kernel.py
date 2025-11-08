@@ -170,6 +170,7 @@ class TeamAgent(KernelBaseModel):
     use_mcp: bool = False
     use_bing: bool = False
     use_reasoning: bool = False
+    use_simple_chat: bool = False
     coding_tools: bool = False
 
 

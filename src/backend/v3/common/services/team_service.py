@@ -143,6 +143,7 @@ class TeamService:
             use_mcp=agent_data.get("use_mcp", False),
             use_bing=agent_data.get("use_bing", False),
             use_reasoning=agent_data.get("use_reasoning", False),
+            use_simple_chat=agent_data.get("use_simple_chat", False),
             index_name=agent_data.get("index_name", ""),
             coding_tools=agent_data.get("coding_tools", False),
         )
