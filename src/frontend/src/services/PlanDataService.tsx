@@ -927,4 +927,19 @@ export class PlanDataService {
 
     return `Human clarification: ${answer}`;
   }
+
+  /**
+   * Check if the current user's team is configured to use SimpleChatAgent
+   * @param userId - The user ID to check
+   * @returns Promise<boolean> - True if team uses SimpleChatAgent
+   */
+  static async isSimpleChatTeam(userId: string): Promise<boolean> {
+    try {
+      const response = await apiService.checkSimpleChatTeam(userId);
+      return response?.is_simple_chat_team || false;
+    } catch (error) {
+      console.warn('Failed to check if team uses SimpleChatAgent:', error);
+      return false;
+    }
+  }
 }

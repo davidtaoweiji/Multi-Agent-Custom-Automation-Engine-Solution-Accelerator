@@ -33,4 +33,5 @@ dependencies = [
     "pexpect==4.9.0",
     "mcp==1.13.1",
     "requests>=2.32.5",
+    "langgraph>=1.0.2",
 ]

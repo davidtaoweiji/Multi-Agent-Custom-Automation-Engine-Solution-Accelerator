@@ -1,8 +1,10 @@
 import { Spinner } from "@fluentui/react-components";
 
 // Simple thinking message to show while creating plan
-const renderThinkingState = (waitingForPlan: boolean) => {
+const renderThinkingState = (waitingForPlan: boolean, isSimpleChat: boolean = false) => {
     if (!waitingForPlan) return null;
+
+    const message = isSimpleChat ? "Processing your request..." : "Creating your plan...";
 
     return (
         <div style={{
@@ -45,7 +47,7 @@ const renderThinkingState = (waitingForPlan: boolean) => {
                         fontSize: '14px'
                     }}>
                         <Spinner size="small" />
-                        <span>Creating your plan...</span>
+                        <span>{message}</span>
                     </div>
                 </div>
             </div>

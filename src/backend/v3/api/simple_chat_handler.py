@@ -1,4 +1,4 @@
-"""Simple chat handler for direct SimpleChatAgent responses without orchestration."""
+"""Simple chat handler for LangGraph Invoice Workflow processing."""
 
 import asyncio
 import logging
@@ -6,88 +6,28 @@ from typing import Optional, Dict
 import json
 
 from common.database.database_factory import DatabaseFactory
-from v3.config.settings import connection_config
-from v3.models.messages import WebsocketMessageType
-from v3.magentic_agents.simple_chat_agent import SimpleChatAgent
-from v3.magentic_agents.magentic_agent_factory import MagenticAgentFactory
+from v3.magentic_agents.invoice_workflow import InvoiceProcessingWorkflow
 
 
 class SimpleChatHandler:
-    """Handler for direct SimpleChatAgent responses without multi-agent orchestration."""
+    """Handler for LangGraph Invoice Workflow processing without multi-agent orchestration."""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        # Cache for reusing agents per user/team
-        self._agent_cache: Dict[str, SimpleChatAgent] = {}
+        # LangGraph workflow for invoice processing
+        self._invoice_workflow = InvoiceProcessingWorkflow()
+        # Store workflow states per user
+        self._workflow_states: Dict[str, Dict] = {}
         
-    async def _get_or_create_agent(self, user_id: str, agent_config) -> SimpleChatAgent:
-        """
-        Get existing agent from cache or create new one.
-        
-        Args:
-            user_id: User ID
-            agent_config: Agent configuration
-            
-        Returns:
-            SimpleChatAgent instance
-        """
-        # Create cache key based on user and agent
-        cache_key = f"{user_id}_{agent_config.name}"
-        
-        # Check if agent already exists in cache
-        if cache_key in self._agent_cache:
-            existing_agent = self._agent_cache[cache_key]
-            if existing_agent.is_open:
-                self.logger.info(f"♻️ Reusing existing agent: {agent_config.name}")
-                return existing_agent
-            else:
-                # Remove closed agent from cache
-                del self._agent_cache[cache_key]
-        
-        # Create new agent
-        self.logger.info(f"🆕 Creating new agent: {agent_config.name}")
-        simple_agent = SimpleChatAgent(
-            agent_name=agent_config.name,
-            agent_description=getattr(agent_config, "description", ""),
-            system_message=getattr(agent_config, "system_message", ""),
-            model_deployment_name=agent_config.deployment_name,
-            user_id=user_id,
-        )
-        
-        # Initialize agent
-        await simple_agent.open()
-        
-        # Cache the agent
-        self._agent_cache[cache_key] = simple_agent
-        
-        return simple_agent
-    
-    async def cleanup_agents(self) -> None:
-        """
-        Clean up all cached agents. Should be called when application shuts down.
-        """
-        self.logger.info(f"🧹 Cleaning up {len(self._agent_cache)} cached agents...")
-        
-        for cache_key, agent in self._agent_cache.items():
-            try:
-                if agent.is_open:
-                    await agent.close()
-                    self.logger.info(f"✅ Closed agent: {cache_key}")
-            except Exception as e:
-                self.logger.error(f"❌ Error closing agent {cache_key}: {e}")
-        
-        self._agent_cache.clear()
-        self.logger.info("🧹 Agent cleanup completed")
-    
     async def is_simple_chat_team(self, user_id: str) -> bool:
         """
-        Check if the current user's team is configured to use SimpleChatAgent.
+        Check if the current user's team is configured to use Invoice Workflow.
         
         Args:
             user_id: The user ID
             
         Returns:
-            True if team uses SimpleChatAgent, False otherwise
+            True if team uses Invoice Workflow, False otherwise
         """
         try:
             memory_store = await DatabaseFactory.get_database(user_id=user_id)
@@ -102,146 +42,180 @@ class SimpleChatHandler:
                 self.logger.warning(f"Team {user_current_team.team_id} not found for user {user_id}")
                 return False
             
-            self.logger.info(f"Checking team '{team.name}' (ID: {team.team_id}) for SimpleChatAgent usage")
+            self.logger.info(f"Checking team '{team.name}' (ID: {team.team_id}) for Invoice Workflow usage")
             
-            # Check for SimpleChatAgent by name (SimpleInvoiceAgent or SimpleDocumentAnalyzer)
+            # Check for Invoice workflow by agent names or team name
             for agent_config in team.agents:
-                if agent_config.name in ['SimpleInvoiceAgent', 'SimpleDocumentAnalyzer']:
-                    self.logger.info(f"✅ Found SimpleChatAgent: {agent_config.name}")
+                if agent_config.name in ['SimpleInvoiceAgent', 'InvoiceProcessingAgent']:
+                    self.logger.info(f"✅ Found Invoice workflow agent: {agent_config.name}")
                     return True
             
-            # Fallback check: If no specific SimpleChatAgent found, check team name
+            # Fallback check: If no specific agent found, check team name
             team_name_lower = team.name.lower()
-            if "simple" in team_name_lower and "invoice" in team_name_lower:
-                self.logger.info(f"✅ Detected Simple Invoice Team by name: {team.name}")
+            if "invoice" in team_name_lower or "simple" in team_name_lower:
+                self.logger.info(f"✅ Detected Invoice workflow team by name: {team.name}")
                 return True
                     
-            self.logger.info(f"❌ No SimpleChatAgent found in team '{team.name}'")
+            self.logger.info(f"❌ No Invoice workflow found in team '{team.name}'")
             return False
             
         except Exception as e:
-            self.logger.error(f"Error checking if team uses simple chat: {e}")
+            self.logger.error(f"Error checking if team uses invoice workflow: {e}")
             return False
     
-    async def handle_simple_chat_request(self, user_id: str, input_task) -> None:
+    async def handle_invoice_workflow(self, user_id: str, input_task) -> str:
         """
-        Handle a chat request using SimpleChatAgent and send response via SSE.
+        Handle an invoice processing request using LangGraph Invoice Workflow.
         
         Args:
             user_id: The user ID
             input_task: The input task with user's message
+            
+        Returns:
+            Complete response string as JSON
         """
         try:
-            self.logger.info(f"🚀 Processing simple chat request for user {user_id}")
+            self.logger.info(f"🚀 Processing direct invoice workflow request for user {user_id}")
             
-            # Get team configuration
-            memory_store = await DatabaseFactory.get_database(user_id=user_id)
-            user_current_team = await memory_store.get_current_team(user_id=user_id)
-            team = await memory_store.get_team_by_id(team_id=user_current_team.team_id)
+            # Initialize workflow if not done already
+            if not self._invoice_workflow._is_initialized:
+                await self._invoice_workflow.initialize()
             
-            # Find SimpleChatAgent in the team (SimpleInvoiceAgent or SimpleDocumentAnalyzer)
-            simple_agent_config = None
-            for agent_config in team.agents:
-                if (agent_config.name in ['SimpleInvoiceAgent', 'SimpleDocumentAnalyzer'] and 
-                    agent_config.deployment_name):  # Has a valid model deployment
-                    simple_agent_config = agent_config
-                    self.logger.info(f"Found SimpleChatAgent: {agent_config.name}")
-                    break
+            user_message = input_task.description
             
-            if not simple_agent_config:
-                raise ValueError("No SimpleChatAgent (SimpleInvoiceAgent/SimpleDocumentAnalyzer) found in team configuration")
-            
-            # Get or create SimpleChatAgent (reuse existing if available)
-            simple_agent = await self._get_or_create_agent(user_id, simple_agent_config)
-            
-            # Send start message
-            await connection_config.send_status_update_async(
-                {
-                    "type": WebsocketMessageType.AGENT_MESSAGE,
-                    "data": {
-                        "agent_name": simple_agent_config.name,
-                        "content": f"🤖 {simple_agent_config.name} is processing your request...",
-                        "status": "processing",
-                        "timestamp": asyncio.get_event_loop().time(),
-                    },
-                },
-                user_id,
-                message_type=WebsocketMessageType.AGENT_MESSAGE,
-            )
-            
-            # Process the request with true streaming support
-            accumulated_response = ""
-            
-            # Stream response chunks as they are generated
-            async for chunk in simple_agent.invoke_stream_async(
-                message=input_task.description,
-                images=None,  # TODO: Add image support if needed
-                chat_history=None  # Agent manages its own history
-            ):
-                accumulated_response += chunk
+            # Check if user has an existing workflow state
+            user_key = f"workflow_{user_id}"
+            existing_state = self._workflow_states.get(user_key)
+            if existing_state and existing_state.get("workflow_stage") == "awaiting_confirmation":
+                # User is responding to a confirmation request
+                self.logger.info(f"🔄 Handling user response in confirmation state")
                 
-                # Send each chunk immediately via SSE
-                await connection_config.send_status_update_async(
-                    {
-                        "type": WebsocketMessageType.AGENT_MESSAGE,
-                        "data": {
-                            "agent_name": simple_agent_config.name,
-                            "content": chunk,
-                            "status": "streaming",
-                            "timestamp": asyncio.get_event_loop().time(),
-                        },
-                    },
-                    user_id,
-                    message_type=WebsocketMessageType.AGENT_MESSAGE,
+                # Handle confirmation or rejection
+                updated_state = await self._invoice_workflow.handle_user_response(
+                    existing_state, user_message
                 )
                 
-            # Send final completion message
-            await connection_config.send_status_update_async(
-                {
-                    "type": WebsocketMessageType.AGENT_MESSAGE,
-                    "data": {
-                        "agent_name": simple_agent_config.name,
-                        "content": "",  # Empty content for completion signal
-                        "status": "completed",
-                        "timestamp": asyncio.get_event_loop().time(),
-                    },
-                },
-                user_id,
-                message_type=WebsocketMessageType.AGENT_MESSAGE,
-            )
-            
-            # Send final result with accumulated response
-            await connection_config.send_status_update_async(
-                {
-                    "type": WebsocketMessageType.FINAL_RESULT_MESSAGE,
-                    "data": {
-                        "content": accumulated_response,  # Use the accumulated response
-                        "status": "completed",
-                        "timestamp": asyncio.get_event_loop().time(),
-                    },
-                },
-                user_id,
-                message_type=WebsocketMessageType.FINAL_RESULT_MESSAGE,
-            )
-            
-            self.logger.info(f"✅ Simple chat request completed for user {user_id}")
+                # Update stored state
+                self._workflow_states[user_key] = updated_state
+                
+                # Create JSON response
+                response_data = self._create_json_response(updated_state)
+                
+                # Clear state if workflow is complete
+                if updated_state.get("workflow_stage") in ["completed", "cancelled"]:
+                    self._workflow_states.pop(user_key, None)
+                    
+                return json.dumps(response_data)
+                
+            elif existing_state and existing_state.get("workflow_stage") == "awaiting_fixes":
+                # User is providing fixes for policy violations
+                self.logger.info(f"🔧 Handling policy violation fixes")
+                
+                # Handle fixes
+                updated_state = await self._invoice_workflow.handle_user_response(
+                    existing_state, user_message
+                )
+                
+                # Update stored state
+                self._workflow_states[user_key] = updated_state
+                
+                # Create JSON response
+                response_data = self._create_json_response(updated_state)
+                
+                return json.dumps(response_data)
+            else:
+                # New invoice processing request
+                self.logger.info(f"📄 Starting new invoice workflow")
+                
+                # Process through complete workflow
+                result_state = await self._invoice_workflow.process_invoice_workflow(
+                    user_id=user_id,
+                    user_message=user_message,
+                    images=None  # TODO: Add image support if needed
+                )
+                
+                # Store state for potential follow-up
+                self._workflow_states[user_key] = result_state
+                
+                # Create JSON response
+                response_data = self._create_json_response(result_state)
+                
+                # Clear state if workflow is complete
+                if result_state.get("workflow_stage") in ["completed", "cancelled"]:
+                    self._workflow_states.pop(user_key, None)
+                
+                return json.dumps(response_data)
                 
         except Exception as e:
-            self.logger.error(f"❌ Error handling simple chat request: {e}")
+            self.logger.error(f"❌ Error in invoice workflow: {e}")
             
-            # Send error message
-            await connection_config.send_status_update_async(
-                {
-                    "type": WebsocketMessageType.AGENT_MESSAGE,
-                    "data": {
-                        "agent_name": "System",
-                        "content": f"Sorry, I encountered an error processing your request: {str(e)}",
-                        "status": "error",
-                        "timestamp": asyncio.get_event_loop().time(),
-                    },
-                },
-                user_id,
-                message_type=WebsocketMessageType.AGENT_MESSAGE,
-            )
+            # Return error response in expected JSON format
+            error_response = {
+                "state": "ERROR",
+                "message": f"❌ Workflow error: {str(e)}",
+                "invoices": []
+            }
+            return json.dumps(error_response)
             
-            raise
+    def _create_json_response(self, workflow_state: Dict) -> Dict:
+        """Create standardized JSON response from workflow state."""
+        
+        # Get the latest assistant message
+        latest_message = ""
+        messages = workflow_state.get("messages", [])
+        for msg in reversed(messages):
+            # Handle both dict and LangGraph message objects (AIMessage, HumanMessage)
+            if hasattr(msg, 'content'):
+                # LangGraph message object
+                latest_message = msg.content
+            elif isinstance(msg, dict):
+                # Dictionary format
+                latest_message = msg.get("content", "")
+            else:
+                continue
+            break
+        
+        # Extract invoice data - now supports multiple invoices
+        invoices = []
+        extracted_data_list = workflow_state.get("extracted_data", [])
+        
+        # Handle both list and dict (backwards compatibility)
+        if isinstance(extracted_data_list, dict):
+            extracted_data_list = [extracted_data_list]
+        
+        for extracted_data in extracted_data_list:
+            if extracted_data and not extracted_data.get("parsing_error"):
+                invoices.append({
+                    "tax_id": extracted_data.get("tax_id", ""),
+                    "company_name": extracted_data.get("company_name", ""),
+                    "vendor_name": extracted_data.get("vendor_name", ""),
+                    "amount": str(extracted_data.get("total_amount", "")),
+                    "date": extracted_data.get("invoice_date", ""),
+                    "items": ", ".join(extracted_data.get("items", [])) if isinstance(extracted_data.get("items"), list) else str(extracted_data.get("items", ""))
+                })
+        
+        # Map workflow stage to state
+        stage_to_state = {
+            "starting": "EXTRACT",
+            "analysis_completed": "EXTRACT", 
+            "verification_completed": "VALIDATE",
+            "awaiting_fixes": "VALIDATE",  # 🔧 添加等待修复状态
+            "fixes_provided": "EXTRACT",
+            "awaiting_confirmation": "CONFIRM",
+            "confirmed": "CONFIRM", 
+            "completed": "NOTIFY",
+            "cancelled": "CANCELLED"
+        }
+        
+        current_state = stage_to_state.get(
+            workflow_state.get("workflow_stage", "starting"), 
+            "UNKNOWN"
+        )
+        
+        return {
+            "state": current_state,
+            "message": latest_message,
+            "invoices": invoices,
+        }
+    
+    

@@ -21,6 +21,7 @@ import {
 // Constants for endpoints
 const API_ENDPOINTS = {
     PROCESS_REQUEST: '/v3/process_request',
+    SIMPLE_CHAT: '/v3/simple_chat',
     PLANS: '/v3/plans',
     PLAN: '/v3/plan',
     PLAN_APPROVAL: '/v3/plan_approval',
@@ -271,6 +272,26 @@ export class APIService {
             agent: data.agent,
             type: data.agent_type
         });
+        return result;
+    }
+
+    /**
+     * Send direct message to SimpleChatAgent (no plan creation)
+     * @param message - User's message/question
+     * @returns Promise with direct response from SimpleChatAgent
+     */
+    async sendSimpleChatMessage(message: string): Promise<{response: string, status: string}> {
+        const params = new URLSearchParams({ message });
+        return apiClient.post(`${API_ENDPOINTS.SIMPLE_CHAT}?${params.toString()}`);
+    }
+
+    /**
+     * Check if the current user's team uses SimpleChatAgent
+     * @param userId - The user ID to check
+     * @returns Promise<{is_simple_chat_team: boolean}> - Response indicating if team uses SimpleChatAgent
+     */
+    async checkSimpleChatTeam(userId: string): Promise<{is_simple_chat_team: boolean}> {
+        const result = await apiClient.get(`/v3/is-simple-chat-team/${userId}`);
         return result;
     }
 }

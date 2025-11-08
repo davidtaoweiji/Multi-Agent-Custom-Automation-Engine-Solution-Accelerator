@@ -21,5 +21,9 @@ export interface InputTaskResponse {
     /** Plan identifier */
     plan_id: string;
     /** The original task description */
-    description: string;
+    description?: string;
+    /** Processing mode: 'orchestration' or 'invoice_workflow_direct' */
+    processing_mode?: string;
+    /** Direct response content (only for invoice_workflow_direct mode) */
+    response?: string;
 }

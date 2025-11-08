@@ -30,6 +30,7 @@ export enum AgentType {
     WEB_SURFER = "WebSurfer",
     SENSOR_SENTINEL = "SensorSentinel",
     MAINTENANCE_KB_AGENT = "MaintanceKBAgent",
+    SIMPLE_INVOICE_AGENT = "SimpleInvoiceAgent",
 }
 
 

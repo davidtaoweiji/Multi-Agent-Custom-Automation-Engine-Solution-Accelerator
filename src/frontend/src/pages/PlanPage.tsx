@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Spinner, Text } from "@fluentui/react-components";
 import { PlanDataService } from "../services/PlanDataService";
 import { ProcessedPlanData, WebsocketMessageType, MPlanData, AgentMessageData, AgentMessageType, ParsedUserClarification, AgentType, PlanStatus, FinalMessage, TeamConfig } from "../models";
@@ -9,6 +9,7 @@ import PlanPanelLeft from "../components/content/PlanPanelLeft";
 import CoralShellColumn from "../coral/components/Layout/CoralShellColumn";
 import CoralShellRow from "../coral/components/Layout/CoralShellRow";
 import Content from "../coral/components/Content/Content";
+import { getUserId, getUserInfoGlobal } from "../api/config";
 import ContentToolbar from "../coral/components/Content/ContentToolbar";
 import {
     useInlineToaster,
@@ -35,6 +36,7 @@ const apiService = new APIService();
 const PlanPage: React.FC = () => {
     const { planId } = useParams<{ planId: string }>();
     const navigate = useNavigate();
+    const location = useLocation();
     const { showToast, dismissToast } = useInlineToaster();
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const [input, setInput] = useState<string>("");
@@ -67,6 +69,11 @@ const PlanPage: React.FC = () => {
     const [cancellingPlan, setCancellingPlan] = useState<boolean>(false);
 
     const [loadingMessage, setLoadingMessage] = useState<string>(loadingMessages[0]);
+
+    // Check for direct response from location state (SimpleChatAgent direct mode)
+    const directResponse = location.state?.directResponse;
+    const processingMode = location.state?.processingMode;
+    const directResponseProcessed = useRef<boolean>(false);
 
     // Plan cancellation alert hook
     const { isPlanActive, handleNavigationWithConfirmation } = usePlanCancellationAlert({
@@ -163,7 +170,7 @@ const PlanPage: React.FC = () => {
 
     }, [setReloadLeftList]);
 
-    const resetPlanVariables = useCallback(() => {
+    const resetPlanVariables = useCallback(async () => {
         setInput("");
         setPlanData(null);
         setLoading(true);
@@ -173,10 +180,30 @@ const PlanPage: React.FC = () => {
         setProcessingApproval(false);
         setPlanApprovalRequest(null);
         setReloadLeftList(true);
-        setWaitingForPlan(true);
+        
+        // Check if this is a SimpleChatAgent team - if so, don't wait for plan and skip WebSocket
+        try {
+            const userId = getUserInfoGlobal()?.user_id || getUserId();
+            const isSimpleChat = await PlanDataService.isSimpleChatTeam(userId);
+            console.log(`🔍 Checking if SimpleChatAgent team for user ${userId}: ${isSimpleChat}`);
+            
+            if (isSimpleChat) {
+                setWaitingForPlan(false);  // Don't wait for plan creation for SimpleChatAgent
+                setContinueWithWebsocketFlow(false);  // Skip WebSocket flow entirely
+                console.log("📝 SimpleChatAgent team detected - skipping plan creation wait and WebSocket");
+            } else {
+                setWaitingForPlan(true);   // Traditional multi-agent workflow
+                setContinueWithWebsocketFlow(false);  // Will be set to true later if needed
+                console.log("🔄 Traditional multi-agent team - waiting for plan creation");
+            }
+        } catch (error) {
+            console.warn("⚠️ Failed to check SimpleChatAgent team, defaulting to traditional workflow:", error);
+            setWaitingForPlan(true);  // Default to traditional workflow on error
+            setContinueWithWebsocketFlow(false);  // Will be set to true later if needed
+        }
+        
         setShowProcessingPlanSpinner(false);
         setShowApprovalButtons(true);
-        setContinueWithWebsocketFlow(false);
         setWsConnected(false);
         setStreamingMessages([]);
         setStreamingMessageBuffer("");
@@ -265,6 +292,15 @@ const PlanPage: React.FC = () => {
             const line = PlanDataService.simplifyHumanClarification(streamingMessage.data.content);
             setShowBufferingText(true);
             setStreamingMessageBuffer(prev => prev + line);
+            
+            // Check if this is from SimpleChatAgent and if streaming is final
+            if (streamingMessage.data.agent && 
+                streamingMessage.data.agent.toLowerCase().includes('simple') && 
+                streamingMessage.data.final) {
+                console.log('📋 SimpleChatAgent streaming completed, enabling chat input');
+                setWaitingForPlan(false);
+                setShowProcessingPlanSpinner(false);
+            }
             //scrollToBottom();
 
         });
@@ -375,6 +411,14 @@ const PlanPage: React.FC = () => {
                 setAgentMessages(prev => [...prev, agentMessageData]);
                 setShowProcessingPlanSpinner(true);
                 scrollToBottom();
+                
+                // Check if this is a SimpleChatAgent response - if so, enable chat input
+                if (agentMessageData.agent && agentMessageData.agent.toLowerCase().includes('simple')) {
+                    console.log('📋 SimpleChatAgent response received, enabling chat input');
+                    setWaitingForPlan(false);
+                    setShowProcessingPlanSpinner(false);
+                }
+                
                 processAgentMessage(agentMessageData, planData);
             }
 
@@ -463,7 +507,7 @@ const PlanPage: React.FC = () => {
     const loadPlanData = useCallback(
         async (useCache = true): Promise<ProcessedPlanData | null> => {
             if (!planId) return null;
-            resetPlanVariables();
+            await resetPlanVariables();
             setLoading(true);
             try {
 
@@ -478,8 +522,25 @@ const PlanPage: React.FC = () => {
                     setShowApprovalButtons(false);
                     setWaitingForPlan(false);
                 }
+                
+                // Only enable WebSocket flow for non-completed plans that are NOT SimpleChatAgent teams
                 if (planResult?.plan?.overall_status !== PlanStatus.COMPLETED) {
-                    setContinueWithWebsocketFlow(true);
+                    try {
+                        const userId = getUserInfoGlobal()?.user_id || getUserId();
+                        const isSimpleChat = await PlanDataService.isSimpleChatTeam(userId);
+                        
+                        if (!isSimpleChat) {
+                            // Only use WebSocket for traditional multi-agent teams
+                            setContinueWithWebsocketFlow(true);
+                            console.log("🔄 Traditional team detected - enabling WebSocket flow");
+                        } else {
+                            setContinueWithWebsocketFlow(false);
+                            console.log("📝 SimpleChatAgent team detected - skipping WebSocket flow");
+                        }
+                    } catch (error) {
+                        console.warn("⚠️ Failed to check team type, defaulting to WebSocket flow:", error);
+                        setContinueWithWebsocketFlow(true);
+                    }
                 }
                 if (planResult?.messages) {
                     setAgentMessages(planResult.messages);
@@ -632,10 +693,76 @@ const PlanPage: React.FC = () => {
         setReloadLeftList(false);
     }, []);
 
+    // Handle direct response from SimpleChatAgent (no WebSocket needed)
+    useEffect(() => {
+        console.log("🔍 Direct response useEffect triggered");
+        console.log("directResponse:", directResponse);
+        console.log("processingMode:", processingMode);
+        console.log("directResponseProcessed:", directResponseProcessed.current);
+        
+        if (directResponse && processingMode === 'invoice_workflow_direct' && !directResponseProcessed.current) {
+            console.log('🚀 Processing direct SimpleChatAgent response');
+            console.log('Direct response content:', directResponse);
+            
+            // Mark as processed to prevent duplicate processing
+            directResponseProcessed.current = true;
+            
+            // Create a mock agent message to display the response
+            const agentMessageData: AgentMessageData = {
+                agent: AgentType.SIMPLE_INVOICE_AGENT,
+                agent_type: AgentMessageType.AI_AGENT,
+                timestamp: Date.now(),
+                steps: [],
+                next_steps: [],
+                content: directResponse,
+                raw_data: JSON.stringify({ content: directResponse, direct_response: true }),
+            };
+
+            // Create minimal plan data for direct response
+            const mockPlanData = {
+                plan: {
+                    id: planId,
+                    plan_id: planId,
+                    session_id: new Date().getTime().toString(),
+                    initial_goal: "Direct SimpleChatAgent Response",
+                    overall_status: PlanStatus.COMPLETED,
+                    user_id: getUserInfoGlobal()?.user_id || getUserId(),
+                    team_id: "00000000-0000-0000-0000-000000000005", // Simple Invoice Team ID
+                },
+                messages: [agentMessageData],
+                team: null,
+                mplan: null,
+                streaming_message: ""
+            };
+
+            // Set both agent messages and plan data
+            setAgentMessages([agentMessageData]);
+            setPlanData(mockPlanData);
+            setWaitingForPlan(false);
+            setShowProcessingPlanSpinner(false);
+            setSubmittingChatDisableInput(false);
+            setLoading(false);
+            
+            console.log('✅ Direct response processed, agent messages set:', [agentMessageData]);
+            console.log('✅ Mock plan data set:', mockPlanData);
+            
+            // Clear the location state to prevent re-processing
+            setTimeout(() => {
+                navigate(location.pathname, { replace: true, state: {} });
+            }, 100);
+        }
+    }, [directResponse, processingMode]);
+
     useEffect(() => {
         const initializePlanLoading = async () => {
+            // Skip plan loading if we have a direct response
+            if (directResponse && processingMode === 'invoice_workflow_direct') {
+                console.log('🔄 Skipping plan loading for direct SimpleChatAgent response');
+                return;
+            }
+            
             if (!planId) {
-                resetPlanVariables();
+                await resetPlanVariables();
                 setErrorLoading(true);
                 return;
             }
@@ -648,7 +775,7 @@ const PlanPage: React.FC = () => {
         };
 
         initializePlanLoading();
-    }, [planId, loadPlanData, resetPlanVariables, setErrorLoading]);
+    }, [planId, loadPlanData, resetPlanVariables, setErrorLoading, directResponse, processingMode]);
 
     if (errorLoading) {
         return (

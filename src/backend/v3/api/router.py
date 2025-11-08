@@ -177,6 +177,106 @@ async def init_team(
         ) from e
 
 
+@app_v3.post("/simple_chat")
+async def simple_chat(
+    request: Request,
+    message: str,
+):
+    """
+    Direct SimpleChatAgent endpoint - no plan creation, immediate response.
+    
+    Args:
+        message: User's message/question
+        
+    Returns:
+        Direct response from SimpleChatAgent
+    """
+    
+    if not await rai_success(message):
+        track_event_if_configured(
+            "RAI failed",
+            {
+                "status": "SimpleChatAgent request blocked - RAI check failed",
+                "message": message,
+            },
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Request contains content that doesn't meet our safety guidelines, try again.",
+        )
+
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+
+    if not user_id:
+        track_event_if_configured(
+            "UserIdNotFound", {"status_code": 400, "detail": "no user"}
+        )
+        raise HTTPException(status_code=400, detail="no user found")
+
+    try:
+        # Check if this team uses SimpleChatAgent
+        is_simple_chat = await simple_chat_handler.is_simple_chat_team(user_id)
+        
+        if not is_simple_chat:
+            raise HTTPException(
+                status_code=400, 
+                detail="Current team is not configured for SimpleChatAgent. Please switch to a SimpleChatAgent team."
+            )
+        
+        logger.info(f"🚀 Processing direct SimpleChatAgent message for user {user_id}")
+        
+        # Create a minimal input task for the handler
+        class SimpleInputTask:
+            def __init__(self, description: str):
+                self.description = description
+                self.session_id = None
+                self.team_id = None
+        
+        input_task = SimpleInputTask(message)
+        response_content = await simple_chat_handler.handle_invoice_workflow(user_id, input_task)
+        
+        return {
+            "response": response_content,
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in SimpleChatAgent processing: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error processing SimpleChatAgent request: {e}"
+        )
+
+
+@app_v3.get("/is-simple-chat-team/{user_id}")
+async def is_simple_chat_team(
+    user_id: str,
+    request: Request,
+):
+    """Check if the current user's team is configured to use SimpleChatAgent"""
+    
+    try:
+        authenticated_user = get_authenticated_user_details(
+            request_headers=request.headers
+        )
+        
+        # Check if the team uses SimpleChatAgent
+        is_simple_chat = await simple_chat_handler.is_simple_chat_team(user_id)
+        
+        return {
+            "is_simple_chat_team": is_simple_chat,
+            "user_id": user_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking simple chat team for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Error checking simple chat team: {e}"
+        ) from e
+
+
 @app_v3.post("/process_request")
 async def process_request(
     background_tasks: BackgroundTasks, input_task: InputTask, request: Request
@@ -316,18 +416,24 @@ async def process_request(
         is_simple_chat = await simple_chat_handler.is_simple_chat_team(user_id)
         
         if is_simple_chat:
-            # Use direct SimpleChatAgent response (faster, no orchestration)
-            async def run_simple_chat_task():
-                await simple_chat_handler.handle_simple_chat_request(user_id, input_task)
-            
-            background_tasks.add_task(run_simple_chat_task)
-            
-            return {
-                "plan_id": plan_id,
-                "status": "Simple chat request started successfully",
-                "session_id": input_task.session_id,
-                "processing_mode": "simple_chat"
-            }
+            # For SimpleChatAgent, return direct response without WebSocket dependency
+            try:
+                logger.info(f"� Processing SimpleChatAgent request directly for user {user_id}")
+                response_content = await simple_chat_handler.handle_invoice_workflow(user_id, input_task)
+                
+                return {
+                    "plan_id": plan_id,
+                    "status": "Invoice workflow completed successfully",
+                    "session_id": input_task.session_id,
+                    "processing_mode": "invoice_workflow_direct",
+                    "response": response_content
+                }
+            except Exception as e:
+                logger.error(f"❌ Error in Invoice Workflow processing: {e}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Error processing SimpleChatAgent request: {e}"
+                )
         else:
             # Use traditional multi-agent orchestration
             async def run_orchestration_task():

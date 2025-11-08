@@ -306,6 +306,65 @@ class ConnectionConfig:
         """Get a connection."""
         return self.connections.get(process_id)
 
+    def has_active_connection(self, user_id: str) -> bool:
+        """Check if user has an active WebSocket connection."""
+        if not user_id:
+            return False
+        
+        # First check if user has a mapped process
+        process_id = self.user_to_process.get(user_id)
+        if not process_id:
+            logger.debug(f"No process mapped for user {user_id}")
+            return False
+        
+        # Then check if the process has an active connection
+        connection = self.connections.get(process_id)
+        if not connection:
+            logger.debug(f"No connection found for process {process_id}")
+            return False
+        
+        # Check if the WebSocket connection is actually open and ready
+        try:
+            # WebSocket states: CONNECTING=0, OPEN=1, CLOSING=2, CLOSED=3
+            connection_state = getattr(connection, 'client_state', None)
+            if connection_state is not None:
+                is_open = connection_state == 1  # WebSocketState.OPEN
+                logger.debug(f"WebSocket state for user {user_id}: {connection_state} (open={is_open})")
+                return is_open
+            else:
+                # Fallback: assume connection exists if we can't check state
+                logger.debug(f"Cannot check WebSocket state for user {user_id}, assuming active")
+                return True
+        except Exception as e:
+            logger.warning(f"Error checking WebSocket state for user {user_id}: {e}")
+            return False
+
+    def get_connection_info(self, user_id: str) -> dict:
+        """Get detailed connection information for debugging."""
+        info = {
+            "user_id": user_id,
+            "has_process_mapping": False,
+            "process_id": None,
+            "has_connection": False,
+            "connection_state": None,
+            "total_connections": len(self.connections),
+            "total_user_mappings": len(self.user_to_process)
+        }
+        
+        if user_id in self.user_to_process:
+            info["has_process_mapping"] = True
+            info["process_id"] = self.user_to_process[user_id]
+            
+            if info["process_id"] in self.connections:
+                info["has_connection"] = True
+                connection = self.connections[info["process_id"]]
+                try:
+                    info["connection_state"] = getattr(connection, 'client_state', 'unknown')
+                except Exception as e:
+                    info["connection_state"] = f"error: {e}"
+        
+        return info
+
     async def close_connection(self, process_id):
         """Remove a connection."""
         connection = self.get_connection(process_id)
