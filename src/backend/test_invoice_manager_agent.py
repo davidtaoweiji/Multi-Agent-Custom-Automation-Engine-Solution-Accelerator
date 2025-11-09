@@ -27,7 +27,7 @@ async def main():
       # Get database instance
     # try:
 
-    manager_id = "test_user_e2e"
+    manager_id = "00000000-0000-0000-0000-000000000000"
     
     logger.info("🚀 Starting Simple InvoiceManagerAgent Test")
     logger.info("="*80)

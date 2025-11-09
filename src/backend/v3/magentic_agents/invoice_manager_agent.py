@@ -11,6 +11,7 @@ from semantic_kernel import Kernel
 from semantic_kernel.agents import ChatCompletionAgent
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.functions import kernel_function
+from semantic_kernel.contents.chat_history import ChatHistory
 
 from common.config.app_config import config
 from common.database.database_factory import DatabaseFactory
@@ -117,27 +118,33 @@ class InvoiceManagerPlugin:
     
     @kernel_function(
         name="update_invoice_status",
-        description="Approve or reject an invoice by updating its status. Requires invoice_id and new_status ('approved' or 'rejected'). Optionally provide rejection_reason if rejecting."
+        description="Approve or reject one or multiple invoices by updating their status. Accepts invoice_id as a single ID or comma-separated list of IDs. Requires new_status ('approved' or 'rejected'). rejection_reason is optional."
     )
     async def update_invoice_status(
         self,
-        invoice_id: Annotated[str, "The ID of the invoice to update"],
+        invoice_id: Annotated[str, "Single invoice ID or comma-separated list of invoice IDs to update (e.g., 'INV001' or 'INV001,INV002,INV003')"],
         new_status: Annotated[str, "New status: 'approved' or 'rejected'"],
-        rejection_reason: Annotated[Optional[str], "Reason for rejection (required if rejecting)"] = None
+        rejection_reason: Annotated[Optional[str], "Optional reason for rejection"] = None
     ) -> Annotated[str, "Result of the status update operation"]:
         """
-        Update the status of an invoice to approved or rejected.
+        Update the status of one or multiple invoices to approved or rejected.
         
         Args:
-            invoice_id: The invoice ID to update
+            invoice_id: Single invoice ID or comma-separated list of IDs
             new_status: Either 'approved' or 'rejected'
-            rejection_reason: Required if status is rejected
+            rejection_reason: Optional reason for rejection
             
         Returns:
-            Confirmation message
+            Confirmation message with results for each invoice
         """
         try:
-            self.logger.info(f"📝 Manager {self.manager_id} updating invoice {invoice_id} to {new_status}")
+            # Parse invoice IDs - handle both single ID and comma-separated list
+            invoice_ids = [id.strip() for id in invoice_id.split(',') if id.strip()]
+            
+            if not invoice_ids:
+                return "Error: No valid invoice IDs provided."
+            
+            self.logger.info(f"📝 Manager {self.manager_id} updating {len(invoice_ids)} invoice(s) to {new_status}")
             
             # Validate status
             if new_status.lower() not in ['approved', 'rejected']:
@@ -146,49 +153,73 @@ class InvoiceManagerPlugin:
             # Get database instance
             db = await DatabaseFactory.get_database()
             
-            # Get the invoice
-            invoice = await db.get_invoice_by_id(invoice_id)
+            # Process each invoice
+            results = []
+            success_count = 0
+            error_count = 0
             
-            if not invoice:
-                return f"Error: Invoice {invoice_id} not found."
+            for inv_id in invoice_ids:
+                try:
+                    # Get the invoice
+                    invoice = await db.get_invoice_by_id(inv_id)
+                    
+                    if not invoice:
+                        results.append(f"❌ Invoice {inv_id}: Not found")
+                        error_count += 1
+                        continue
+                    
+                    # Verify this manager has permission
+                    if invoice.manager_id != self.manager_id:
+                        results.append(f"❌ Invoice {inv_id}: Not authorized (assigned to {invoice.manager_id})")
+                        error_count += 1
+                        continue
+                    
+                    # Check if already processed
+                    if invoice.status != InvoiceStatus.pending:
+                        results.append(f"⚠️ Invoice {inv_id}: Already {invoice.status}")
+                        error_count += 1
+                        continue
+                    
+                    # Update status
+                    if new_status.lower() == 'approved':
+                        invoice.status = InvoiceStatus.approved
+                        invoice.approved_date = datetime.now()
+                        invoice.rejection_reason = None
+                    else:  # rejected
+                        invoice.status = InvoiceStatus.rejected
+                        invoice.rejection_reason = rejection_reason
+                        invoice.approved_date = None
+                    
+                    # Save to database
+                    updated_invoice = await db.update_invoice(invoice)
+                    
+                    result_line = f"✅ Invoice {inv_id}: {new_status.upper()} | {invoice.vendor_name} | {invoice.currency} {invoice.total_amount}"
+                    results.append(result_line)
+                    success_count += 1
+                    
+                except Exception as e:
+                    results.append(f"❌ Invoice {inv_id}: Error - {str(e)}")
+                    error_count += 1
             
-            # Verify this manager has permission (invoice.manager_id matches)
-            if invoice.manager_id != self.manager_id:
-                return f"Error: You are not authorized to approve/reject this invoice. Assigned manager: {invoice.manager_id}"
+            # Build summary message
+            summary = f"\n{'='*60}\n"
+            summary += f"📊 BATCH UPDATE SUMMARY\n"
+            summary += f"{'='*60}\n"
+            summary += f"Total processed: {len(invoice_ids)} | Success: {success_count} | Errors: {error_count}\n"
+            summary += f"Status: {new_status.upper()}\n"
+            if new_status.lower() == 'rejected' and rejection_reason:
+                summary += f"Rejection reason: {rejection_reason}\n"
+            summary += f"{'='*60}\n\n"
             
-            # Check if already processed
-            if invoice.status != InvoiceStatus.pending:
-                return f"Error: Invoice {invoice_id} has already been {invoice.status}. Cannot update."
+            # Add individual results
+            summary += "\n".join(results)
             
-            # Update status
-            if new_status.lower() == 'approved':
-                invoice.status = InvoiceStatus.approved
-                invoice.approved_date = datetime.now()
-                invoice.rejection_reason = None
-            else:  # rejected
-                if not rejection_reason:
-                    return "Error: rejection_reason is required when rejecting an invoice."
-                invoice.status = InvoiceStatus.rejected
-                invoice.rejection_reason = rejection_reason
-                invoice.approved_date = None
-            
-            # Save to database
-            updated_invoice = await db.update_invoice(invoice)
-            
-            result_msg = f"✅ Invoice {invoice_id} has been {new_status}.\n"
-            result_msg += f"   Submitted by: {invoice.user_id}\n"
-            result_msg += f"   Vendor: {invoice.vendor_name}\n"
-            result_msg += f"   Amount: {invoice.currency} {invoice.total_amount}\n"
-            
-            if new_status.lower() == 'rejected':
-                result_msg += f"   Rejection reason: {rejection_reason}\n"
-            
-            self.logger.info(f"✅ Successfully {new_status} invoice {invoice_id}")
-            return result_msg
+            self.logger.info(f"✅ Batch update complete: {success_count}/{len(invoice_ids)} successful")
+            return summary
             
         except Exception as e:
             self.logger.error(f"❌ Error updating invoice status: {e}")
-            return f"Error updating invoice: {str(e)}"
+            return f"Error updating invoice(s): {str(e)}"
 
 
 class InvoiceManagerAgent:
@@ -206,6 +237,8 @@ class InvoiceManagerAgent:
         self._kernel: Optional[Kernel] = None
         self._agent: Optional[ChatCompletionAgent] = None
         self._plugin: Optional[InvoiceManagerPlugin] = None
+        self._chat_history: ChatHistory = ChatHistory()
+        self.extracted_invoice: Optional[List[Dict[str, Any]]] = None
         self._is_initialized = False
     
     async def initialize(self):
@@ -235,34 +268,55 @@ class InvoiceManagerAgent:
             # Create agent with system instructions
             system_message = f"""You are an intelligent Invoice Management Assistant for managers.
 
-Your role is to help Manager ID: {self.manager_id} review and process invoice reimbursement requests.
+            Your role is to help Manager ID: {self.manager_id} review and process invoice reimbursement requests.
 
-**Your capabilities:**
-1. Query pending invoices that require this manager's approval
-2. Approve invoices that meet company policies
-3. Reject invoices with appropriate reasons
+            **Your capabilities:**
+            1. Query pending invoices that require this manager's approval
+            2. Update invoice status to approved or rejected with optional rejection reason
 
-**Guidelines:**
-- Always verify invoice details before approving
-- Provide clear explanations for rejections
-- Be professional and helpful
-- When user asks to see pending invoices, use the query_pending_invoices function
-- When user wants to approve/reject an invoice, use the update_invoice_status function
-- Always confirm the action after updating an invoice status
+            **Context Guidelines:**
+            - For QUERY operations: Always use the query_pending_invoices function to get fresh data from database. Ignore any previously extracted invoices.
+            - For UPDATE operations: Reference the previously extracted invoices below when user mentions "first invoice", "invoice from vendor X", etc.
 
-**IMPORTANT: Response format:**
-- You MUST always return a valid JSON object
-- Never return plain text responses
-- Use this JSON structure:
-  {{
-    "status": "success" or "error",
-    "message": "Brief description of the result",
-    "data": {{ ... relevant data ... }}
-  }}
-- For queries, include the invoice list in the "data" field
-- For updates, include confirmation details in the "data" field
-- Be clear, concise, and professional in the "message" field
-"""
+            **Previously Extracted Invoices (for UPDATE reference only):**
+            {json.dumps(self.extracted_invoice, indent=2) if self.extracted_invoice else "No invoice data extracted yet."}
+
+            **Guidelines:**
+            - Always verify invoice details before approving
+            - Be professional and helpful
+            - When user asks to see pending invoices, use the query_pending_invoices function
+            - When user wants to approve/reject an invoice, use the update_invoice_status function
+            - Always confirm the action after updating an invoice status
+
+            **IMPORTANT: Response format:**
+            - You MUST always return a valid JSON object
+            - Never return plain text responses
+            - Use this JSON structure:
+            {{
+                "status": "success" or "error",
+                "type": "query" or "update",
+                "data":  [
+                    {{
+                        "invoice_id": "invoice_id_1",
+                        "user_id": "user_id_value",
+                        "vendor_name": "vendor_name_value",
+                        "company_name": "company_name_value",
+                        "total_amount": 100.0,
+                        "currency": "USD",
+                        "invoice_date": "YYYY-MM-DD",
+                        "submitted_date": "YYYY-MM-DD HH:MM:SS",
+                        "items": "items_description",
+                        "tax_id": "tax_id_value",
+                        "invoice_number": "invoice_number_value",
+                        "status": most updated status
+                    }}
+                ]
+            }}
+
+            - For queries, include the complete invoice list in the "data" field
+            - For updates, include confirmation details for each processed invoice in the "data" field
+            - Be clear, concise, and professional in the response structure
+            """
             
             self._agent = ChatCompletionAgent(
                 kernel=self._kernel,
@@ -281,6 +335,7 @@ Your role is to help Manager ID: {self.manager_id} review and process invoice re
     async def process_request(self, user_message: str) -> str:
         """
         Process a manager's request (query or approve/reject invoices).
+        Maintains conversation history for context across multiple requests.
         
         Args:
             user_message: The manager's message/command
@@ -294,14 +349,35 @@ Your role is to help Manager ID: {self.manager_id} review and process invoice re
         try:
             self.logger.info(f"📨 Processing manager request: {user_message[:100]}...")
             
-            # Invoke agent with function calling enabled
+            # Add user message to history
+            self._chat_history.add_user_message(user_message)
+            
+            # Invoke agent with function calling enabled and conversation history
             response_parts = []
-            async for response in self._agent.invoke(user_message):
+            async for response in self._agent.invoke(self._chat_history):
                 if response.content:
                     response_parts.append(str(response.content))
             
             full_response = "".join(response_parts)
-            self.logger.info("✅ Manager request processed successfully")
+            
+            # Add assistant response to history
+            self._chat_history.add_assistant_message(full_response)
+            
+            # Parse JSON response and extract invoice data if it's a query
+            try:
+                response_json = json.loads(full_response)
+                if (response_json.get("type") == "query" and 
+                    response_json.get("status") == "success" and 
+                    "data" in response_json):
+                    
+                    # Store the invoice data for future reference
+                    self.extracted_invoice = response_json["data"]
+                    self.logger.info(f"📋 Extracted {len(self.extracted_invoice)} invoice(s) from query response")
+                    
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                self.logger.warning(f"⚠️ Could not parse response as JSON or extract invoice data: {e}")
+            
+            self.logger.info(f"✅ Manager request processed successfully. History length: {len(self._chat_history.messages)}")
             
             return full_response
             
@@ -309,11 +385,21 @@ Your role is to help Manager ID: {self.manager_id} review and process invoice re
             self.logger.error(f"❌ Error processing manager request: {e}")
             return f"Error processing request: {str(e)}"
     
+    def get_chat_history(self) -> ChatHistory:
+        """Get the current chat history."""
+        return self._chat_history
+    
+    def clear_chat_history(self):
+        """Clear the conversation history."""
+        self._chat_history.clear()
+        self.logger.info(f"🧹 Chat history cleared for manager {self.manager_id}")
+    
     async def close(self):
         """Clean up resources."""
         self._kernel = None
         self._agent = None
         self._plugin = None
+        self._chat_history.clear()
         self._is_initialized = False
         self.logger.info(f"🧹 InvoiceManagerAgent closed for manager {self.manager_id}")
     

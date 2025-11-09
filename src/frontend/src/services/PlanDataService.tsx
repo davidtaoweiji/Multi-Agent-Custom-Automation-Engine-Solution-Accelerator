@@ -942,4 +942,19 @@ export class PlanDataService {
       return false;
     }
   }
+
+  /**
+   * Check if the current user's team is Manager Team
+   * @param userId - The user ID to check
+   * @returns Promise<boolean> - True if team is Manager Team
+   */
+  static async isManagerTeam(userId: string): Promise<boolean> {
+    try {
+      const response = await apiService.checkManagerTeam(userId);
+      return response?.is_manager_team || false;
+    } catch (error) {
+      console.warn('Failed to check if team is Manager Team:', error);
+      return false;
+    }
+  }
 }

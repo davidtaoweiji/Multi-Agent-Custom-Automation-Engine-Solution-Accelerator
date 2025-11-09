@@ -81,6 +81,44 @@ class SimpleChatHandler:
             self.logger.error(f"Error checking if team uses invoice workflow: {e}")
             return False
     
+    async def is_manager_team(self, user_id: str) -> bool:
+        """
+        Check if the current user's team is configured for Manager queries.
+        
+        Args:
+            user_id: The user ID
+            
+        Returns:
+            True if team is Manager Team, False otherwise
+        """
+        try:
+            memory_store = await DatabaseFactory.get_database(user_id=user_id)
+            user_current_team = await memory_store.get_current_team(user_id=user_id)
+            
+            if not user_current_team:
+                self.logger.warning(f"No current team found for user {user_id}")
+                return False
+                
+            team = await memory_store.get_team_by_id(team_id=user_current_team.team_id)
+            if not team:
+                self.logger.warning(f"Team {user_current_team.team_id} not found for user {user_id}")
+                return False
+            
+            self.logger.info(f"Checking team '{team.name}' (ID: {team.team_id}) for Manager Team")
+            
+            # Check if team name contains "Query Manager Team"
+            team_name_lower = team.name.lower()
+            if "query manager" in team_name_lower or team.name == "Query Manager Team":
+                self.logger.info(f"✅ Detected Manager Team: {team.name}")
+                return True
+                    
+            self.logger.info(f"❌ Not a Manager Team: '{team.name}'")
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error checking if team is manager team: {e}")
+            return False
+    
     async def handle_invoice_workflow(self, user_id: str, input_task) -> str:
         """
         Handle an invoice processing request using LangGraph Invoice Workflow.

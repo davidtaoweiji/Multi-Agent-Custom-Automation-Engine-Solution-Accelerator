@@ -68,6 +68,7 @@ const HomeInput: React.FC<HomeInputProps> = ({
     const [simpleChatResponse, setSimpleChatResponse] = useState<string>("");
     const [simpleChatError, setSimpleChatError] = useState<string>("");
     const [isSimpleChatMode, setIsSimpleChatMode] = useState<boolean>(false);
+    const [isManagerMode, setIsManagerMode] = useState<boolean>(false);
     const [attachedImages, setAttachedImages] = useState<ImageFile[]>([]);
     const [chatHistory, setChatHistory] = useState<Array<{
         id: string, 
@@ -105,14 +106,22 @@ const HomeInput: React.FC<HomeInputProps> = ({
         return cleanup;
     }, []);
 
-    // Check if current team is SimpleChatAgent on mount and when team changes
+    // Check if current team is SimpleChatAgent or Manager Team on mount and when team changes
     useEffect(() => {
         const checkTeamType = async () => {
             try {
                 const userId = getUserInfoGlobal()?.user_id || getUserId();
                 if (userId) {
-                    const isSimpleChat = await PlanDataService.isSimpleChatTeam(userId);
+                    // Check both team types
+                    const [isSimpleChat, isManager] = await Promise.all([
+                        PlanDataService.isSimpleChatTeam(userId),
+                        PlanDataService.isManagerTeam(userId)
+                    ]);
+                    
                     setIsSimpleChatMode(isSimpleChat);
+                    setIsManagerMode(isManager);
+                    
+                    console.log(`Team type check - SimpleChatMode: ${isSimpleChat}, ManagerMode: ${isManager}`);
                 }
             } catch (error) {
                 console.error("Error checking team type:", error);
@@ -129,11 +138,85 @@ const HomeInput: React.FC<HomeInputProps> = ({
             setSimpleChatError(""); // Clear any previous SimpleChatAgent errors
             
             try {
-                // Check if current team is SimpleChatAgent team
                 const userId = getUserInfoGlobal()?.user_id || getUserId();
-                const isSimpleChat = await PlanDataService.isSimpleChatTeam(userId);
                 
-                if (isSimpleChat) {
+                // Check if Manager Team mode
+                if (isManagerMode) {
+                    // Manager Team flow - query/approve invoices, no file uploads
+                    let id = showToast("Processing your manager query...", "progress");
+                    
+                    const userMessage = input.trim();
+                    
+                    try {
+                        const apiService = new APIService();
+                        const response = await apiService.sendManagerChatMessage(userMessage);
+                        
+                        console.log("Manager agent response:", response);
+                        
+                        // Parse JSON response for manager operations
+                        let displayResponse = response.response || "No response from manager";
+                        let invoiceData = null;
+                        
+                        try {
+                            const jsonResponse = JSON.parse(response.response);
+                            console.log("Parsed Manager JSON response:", jsonResponse);
+                            
+                            if (jsonResponse.status === "success") {
+                                
+                                if (jsonResponse.type === "query" && jsonResponse.data && Array.isArray(jsonResponse.data)) {
+                                    // Query response - extract invoice data for table display
+                                    invoiceData = jsonResponse.data;
+                                    displayResponse = `Found ${invoiceData.length} pending invoice(s)`;
+                                    console.log("Found query response with invoices:", invoiceData);
+                                } else if (jsonResponse.type === "update" && jsonResponse.data && Array.isArray(jsonResponse.data)) {
+                                    // Update response - show operation results  
+                                    const updateData = jsonResponse.data;
+                                    const successCount = updateData.filter((item: any) => item.new_status).length;
+                                    displayResponse = `Successfully processed ${successCount} invoice(s)`;
+                                    console.log("Found update response with results:", updateData);
+                                } else {
+                                    // Fallback to original response
+                                    displayResponse = jsonResponse.message || displayResponse;
+                                }
+                            } else {
+                                // Error response
+                                displayResponse = jsonResponse.message || "Error processing request";
+                            }
+                        } catch (parseError) {
+                            // Not JSON, use response as is
+                            console.log("Received plain text manager response:", response.response);
+                        }
+                        
+                        // Add to chat history
+                        const newChatEntry = {
+                            id: Date.now().toString(),
+                            message: userMessage,
+                            response: displayResponse,
+                            invoiceData: invoiceData, // Use same field as SimpleChatAgent for consistency
+                            timestamp: new Date()
+                        };
+                        setChatHistory(prev => [...prev, newChatEntry]);
+                        
+                        dismissToast(id);
+                        showToast("Manager query processed!", "success");
+                        
+                        setInput("");
+                        setAttachedImages([]); // Clear any attachments (shouldn't have any in Manager mode)
+                        
+                        if (textareaRef.current) {
+                            textareaRef.current.style.height = "auto";
+                        }
+                        
+                    } catch (error: any) {
+                        dismissToast(id);
+                        console.error("Manager chat error:", error);
+                        const errorMessage = error.response?.data?.detail || error.message || "Failed to process manager request";
+                        showToast(`Error: ${errorMessage}`, "error", { timeoutMs: 8000 });
+                        setSimpleChatError(errorMessage);
+                    }
+                }
+                // Check if SimpleChatAgent team
+                else if (await PlanDataService.isSimpleChatTeam(userId)) {
                     // SimpleChatAgent flow - direct response, no plan creation
                     let id = showToast("Processing your message...", "progress");
                     setIsSimpleChatMode(true);
@@ -331,7 +414,7 @@ const HomeInput: React.FC<HomeInputProps> = ({
                             ref={chatContainerRef}
                             style={{
                                 marginBottom: '24px',
-                                maxHeight: '400px',
+                                maxHeight: '600px',
                                 overflowY: 'auto',
                                 padding: '16px 0'
                             }}
@@ -340,7 +423,7 @@ const HomeInput: React.FC<HomeInputProps> = ({
                                 <div key={chat.id}>
                                     {/* User Message */}
                                     <div style={{
-                                        maxWidth: '800px',
+                                        maxWidth: '1200px',
                                         margin: '0 auto 24px auto',
                                         padding: '0 24px',
                                         display: 'flex',
@@ -386,7 +469,7 @@ const HomeInput: React.FC<HomeInputProps> = ({
                                     
                                     {/* Assistant Response */}
                                     <div style={{
-                                        maxWidth: '800px',
+                                        maxWidth: '1200px',
                                         margin: '0 auto 32px auto',
                                         padding: '0 24px',
                                         display: 'flex',
@@ -433,8 +516,8 @@ const HomeInput: React.FC<HomeInputProps> = ({
                                                         borderRadius: '4px',
                                                         fontSize: '12px',
                                                         fontWeight: '600',
-                                                        marginBottom: '8px',
-                                                        display: 'inline-block'
+                                                        marginBottom: '12px',
+                                                        display: 'block'
                                                     }}>
                                                         State: {chat.state}
                                                     </div>
@@ -551,6 +634,230 @@ const HomeInput: React.FC<HomeInputProps> = ({
                         </div>
                     )}
 
+                    {/* Chat History for Manager mode */}
+                    {isManagerMode && chatHistory.length > 0 && (
+                        <div 
+                            ref={chatContainerRef}
+                            style={{
+                                marginBottom: '24px',
+                                maxHeight: '600px',
+                                overflowY: 'auto',
+                                padding: '16px 0'
+                            }}
+                        >
+                            {chatHistory.map((chat) => (
+                                <div key={chat.id}>
+                                    {/* User Message */}
+                                    <div style={{
+                                        maxWidth: '1200px',
+                                        margin: '0 auto 24px auto',
+                                        padding: '0 24px',
+                                        display: 'flex',
+                                        alignItems: 'flex-start',
+                                        gap: '16px',
+                                        justifyContent: 'flex-end'
+                                    }}>
+                                        <div style={{
+                                            flex: 1,
+                                            maxWidth: 'calc(100% - 48px)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'flex-end'
+                                        }}>
+                                            <div style={{
+                                                backgroundColor: 'var(--colorBrandBackground)',
+                                                color: 'white',
+                                                padding: '12px 16px',
+                                                borderRadius: '8px',
+                                                fontSize: '14px',
+                                                lineHeight: '1.5',
+                                                wordWrap: 'break-word',
+                                                maxWidth: '80%',
+                                                alignSelf: 'flex-end'
+                                            }}>
+                                                {chat.message}
+                                            </div>
+                                        </div>
+                                        <div style={{
+                                            width: '32px',
+                                            height: '32px',
+                                            borderRadius: '50%',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            flexShrink: 0,
+                                            backgroundColor: 'var(--colorBrandBackground)',
+                                            color: 'white'
+                                        }}>
+                                            👤
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Manager Assistant Response */}
+                                    <div style={{
+                                        maxWidth: '1200px',
+                                        margin: '0 auto 32px auto',
+                                        padding: '0 24px',
+                                        display: 'flex',
+                                        alignItems: 'flex-start',
+                                        gap: '16px'
+                                    }}>
+                                        <div style={{
+                                            width: '32px',
+                                            height: '32px',
+                                            borderRadius: '50%',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            flexShrink: 0,
+                                            backgroundColor: 'var(--colorNeutralBackground3)'
+                                        }}>
+                                            👨‍💼
+                                        </div>
+                                        <div style={{
+                                            flex: 1,
+                                            maxWidth: 'calc(100% - 48px)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'flex-start'
+                                        }}>
+                                            <div style={{
+                                                backgroundColor: 'var(--colorNeutralBackground2)',
+                                                color: 'var(--colorNeutralForeground1)',
+                                                padding: '12px 16px',
+                                                borderRadius: '8px',
+                                                fontSize: '14px',
+                                                lineHeight: '1.5',
+                                                wordWrap: 'break-word',
+                                                maxWidth: '100%',
+                                                alignSelf: 'flex-start',
+                                                whiteSpace: 'pre-wrap'
+                                            }}>
+                                                {/* Show Manager badge */}
+                                                <div style={{
+                                                    backgroundColor: 'var(--colorBrandBackground)',
+                                                    color: 'white',
+                                                    padding: '4px 8px',
+                                                    borderRadius: '4px',
+                                                    fontSize: '12px',
+                                                    fontWeight: '600',
+                                                    marginBottom: '12px',
+                                                    display: 'block'
+                                                }}>
+                                                    Manager Agent
+                                                </div>
+                                                
+                                                {chat.response}
+                                                
+                                                {/* Display invoice data if available (same as SimpleChatAgent) */}
+                                                {chat.invoiceData && chat.invoiceData.length > 0 && (
+                                                    <div style={{ 
+                                                        marginTop: '16px', 
+                                                        padding: '16px',
+                                                        backgroundColor: 'var(--colorNeutralBackground1)',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid var(--colorNeutralStroke2)'
+                                                    }}>
+                                                        <Text size={400} weight="semibold" style={{ 
+                                                            color: 'var(--colorBrandForeground1)',
+                                                            marginBottom: '12px',
+                                                            display: 'block'
+                                                        }}>
+                                                            📋 Pending Invoices ({chat.invoiceData.length} item{chat.invoiceData.length > 1 ? 's' : ''})
+                                                        </Text>
+                                                        
+                                                        {/* Table format for invoice data (same as SimpleChatAgent) */}
+                                                        <div style={{
+                                                            backgroundColor: 'white',
+                                                            borderRadius: '6px',
+                                                            border: '1px solid var(--colorNeutralStroke1)',
+                                                            overflow: 'hidden',
+                                                            overflowX: 'auto'
+                                                        }}>
+                                                            <table style={{
+                                                                width: '100%',
+                                                                borderCollapse: 'collapse',
+                                                                fontSize: '13px',
+                                                                minWidth: '600px'
+                                                            }}>
+                                                                <thead>
+                                                                    <tr style={{
+                                                                        backgroundColor: 'var(--colorNeutralBackground2)',
+                                                                        borderBottom: '1px solid var(--colorNeutralStroke2)'
+                                                                    }}>
+                                                                        {/* Create header from first invoice keys */}
+                                                                        {chat.invoiceData[0] && Object.keys(chat.invoiceData[0]).map((key) => (
+                                                                            <th key={key} style={{
+                                                                                padding: '12px 14px',
+                                                                                textAlign: 'left',
+                                                                                fontWeight: '600',
+                                                                                color: 'var(--colorNeutralForeground2)',
+                                                                                textTransform: 'capitalize',
+                                                                                borderRight: '1px solid var(--colorNeutralStroke2)',
+                                                                                whiteSpace: 'nowrap'
+                                                                            }}>
+                                                                                {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                                                            </th>
+                                                                        ))}
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    {chat.invoiceData.map((invoice, index) => (
+                                                                        <tr key={index} style={{
+                                                                            borderBottom: index < chat.invoiceData!.length - 1 ? '1px solid var(--colorNeutralStroke1)' : 'none',
+                                                                            backgroundColor: index % 2 === 0 ? 'white' : 'var(--colorNeutralBackground1)'
+                                                                        }}>
+                                                                            {Object.entries(invoice).map(([key, value], cellIndex) => (
+                                                                                <td key={key} style={{
+                                                                                    padding: '12px 14px',
+                                                                                    borderRight: cellIndex < Object.entries(invoice).length - 1 ? '1px solid var(--colorNeutralStroke2)' : 'none',
+                                                                                    verticalAlign: 'top',
+                                                                                    maxWidth: key === 'items' ? '200px' : '150px',
+                                                                                    wordWrap: 'break-word',
+                                                                                    overflow: 'hidden',
+                                                                                    textOverflow: 'ellipsis'
+                                                                                }}>
+                                                                                    <span style={{
+                                                                                        color: key === 'amount' || key === 'total_amount' ? 'var(--colorBrandForeground1)' : (value ? 'var(--colorNeutralForeground1)' : 'var(--colorNeutralForeground3)'),
+                                                                                        fontStyle: value ? 'normal' : 'italic',
+                                                                                        fontWeight: key === 'amount' || key === 'total_amount' ? '600' : 'normal'
+                                                                                    }} title={String(value) || 'N/A'}>
+                                                                                        {/* Format specific fields */}
+                                                                                        {key === 'amount' || key === 'total_amount' ? 
+                                                                                            (value ? `$${String(value)}` : 'N/A') :
+                                                                                            (String(value) || 'N/A')
+                                                                                        }
+                                                                                    </span>
+                                                                                </td>
+                                                                            ))}
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                        
+                                                        {/* Summary information */}
+                                                        <div style={{
+                                                            marginTop: '12px',
+                                                            padding: '8px 12px',
+                                                            backgroundColor: 'var(--colorBrandBackground)',
+                                                            color: 'white',
+                                                            borderRadius: '4px',
+                                                            fontSize: '12px',
+                                                            textAlign: 'center'
+                                                        }}>
+                                                            Total: {chat.invoiceData.length} pending invoice{chat.invoiceData.length > 1 ? 's' : ''} for review
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                     {/* Show error if present */}
                     {simpleChatError && (
                         <div style={{
@@ -566,7 +873,7 @@ const HomeInput: React.FC<HomeInputProps> = ({
                     )}
 
                     {/* Image Upload Component - only show in SimpleChatAgent mode */}
-                    {isSimpleChatMode && (
+                    {isSimpleChatMode && !isManagerMode && (
                         <ImageUpload 
                             files={attachedImages}
                             onFilesChange={setAttachedImages}
@@ -577,7 +884,11 @@ const HomeInput: React.FC<HomeInputProps> = ({
                     <ChatInput
                         ref={textareaRef} // forwarding
                         value={input}
-                        placeholder="Tell us what needs planning, building, or connecting—we'll handle the rest."
+                        placeholder={
+                            isManagerMode 
+                                ? "Ask about pending invoices, approve or reject submissions..." 
+                                : "Tell us what needs planning, building, or connecting—we'll handle the rest."
+                        }
                         onChange={setInput}
                         onEnter={handleSubmit}
                         disabledChat={submitting}

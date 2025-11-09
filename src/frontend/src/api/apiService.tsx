@@ -314,6 +314,27 @@ export class APIService {
         const result = await apiClient.get(`/v3/is-simple-chat-team/${userId}`);
         return result;
     }
+
+    /**
+     * Check if the current user's team is Manager Team
+     * @param userId - The user ID to check
+     * @returns Promise<{is_manager_team: boolean}> - Response indicating if team is Manager Team
+     */
+    async checkManagerTeam(userId: string): Promise<{is_manager_team: boolean}> {
+        const result = await apiClient.get(`/v3/is-manager-team/${userId}`);
+        return result;
+    }
+
+    /**
+     * Send a manager query message (for Manager Team)
+     * @param message - The manager's query or command
+     * @returns Promise with the response
+     */
+    async sendManagerChatMessage(message: string): Promise<{response: string, status: string, manager_id: string}> {
+        const formData = new FormData();
+        formData.append('message', message);
+        return apiClient.upload('/v3/manager_chat', formData);
+    }
 }
 
 // Export a singleton instance

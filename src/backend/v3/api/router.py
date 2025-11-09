@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import uuid
-from typing import Optional
+from typing import Optional, Dict
 
 import v3.models.messages as messages
 from auth.auth_utils import get_authenticated_user_details
@@ -36,9 +36,12 @@ from v3.config.settings import (
 )
 from v3.orchestration.orchestration_manager import OrchestrationManager
 from v3.api.simple_chat_handler import SimpleChatHandler
+from v3.magentic_agents.invoice_manager_agent import InvoiceManagerAgent
 
 # Global instance for agent caching and reuse
 simple_chat_handler = SimpleChatHandler()
+# Global manager agents cache {user_id: InvoiceManagerAgent}
+manager_agents_cache: Dict[str, InvoiceManagerAgent] = {}
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -270,6 +273,87 @@ async def simple_chat(
         )
 
 
+@app_v3.post("/manager_chat")
+async def manager_chat(
+    request: Request,
+    message: str = "",
+):
+    """
+    Manager Invoice Query endpoint - handles manager queries for pending invoices 
+    and approval/rejection operations.
+    
+    This endpoint uses InvoiceManagerAgent which provides:
+    - Query pending invoices requiring approval
+    - Approve invoices
+    - Reject invoices with reasons
+    - Function calling for database operations
+    
+    Args:
+        message: Manager's query or command
+        
+    Returns:
+        JSON response with invoice data or operation results
+        
+    Examples:
+        - "Show me pending invoices"
+        - "Approve invoice INV-001"
+        - "Reject invoice INV-002 because the amount exceeds limit"
+    """
+    
+    if not await rai_success(message):
+        track_event_if_configured(
+            "RAI failed",
+            {
+                "status": "Manager query blocked - RAI check failed",
+                "message": message,
+            },
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Request contains content that doesn't meet our safety guidelines, try again.",
+        )
+
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+
+    if not user_id:
+        track_event_if_configured(
+            "UserIdNotFound", {"status_code": 400, "detail": "no user"}
+        )
+        raise HTTPException(status_code=400, detail="no user found")
+
+    try:
+        # Get or create manager agent for this user
+        if user_id not in manager_agents_cache:
+            logger.info(f"🔧 Creating new InvoiceManagerAgent for manager {user_id}")
+            manager_agent = InvoiceManagerAgent(manager_id=user_id, model_deployment_name="gpt-4o")
+            await manager_agent.initialize()
+            manager_agents_cache[user_id] = manager_agent
+        else:
+            manager_agent = manager_agents_cache[user_id]
+            logger.info(f"♻️ Reusing cached InvoiceManagerAgent for manager {user_id}")
+        
+        logger.info(f"🔍 Processing manager query: {message[:100]}...")
+        
+        # Process the manager's request
+        response_content = await manager_agent.process_request(message)
+        
+        logger.info(f"✅ Manager query processed successfully:{response_content}",)
+        
+        return {
+            "response": response_content,
+            "status": "success",
+            "manager_id": user_id
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in manager query processing: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error processing manager request: {e}"
+        )
+
+
 @app_v3.get("/is-simple-chat-team/{user_id}")
 async def is_simple_chat_team(
     user_id: str,
@@ -295,6 +379,34 @@ async def is_simple_chat_team(
         raise HTTPException(
             status_code=400, 
             detail=f"Error checking simple chat team: {e}"
+        ) from e
+
+
+@app_v3.get("/is-manager-team/{user_id}")
+async def is_manager_team(
+    user_id: str,
+    request: Request,
+):
+    """Check if the current user's team is configured as Manager Team"""
+    
+    try:
+        authenticated_user = get_authenticated_user_details(
+            request_headers=request.headers
+        )
+        
+        # Check if the team is Manager Team
+        is_manager = await simple_chat_handler.is_manager_team(user_id)
+        
+        return {
+            "is_manager_team": is_manager,
+            "user_id": user_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking manager team for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Error checking manager team: {e}"
         ) from e
 
 
