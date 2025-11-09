@@ -194,6 +194,7 @@ const HomeInput: React.FC<HomeInputProps> = ({
                         setChatHistory(prev => [...prev, newChatEntry]);
                         
                         setInput("");
+                        setAttachedImages([]); // Clear attached files after successful submission
                         
                         if (textareaRef.current) {
                             textareaRef.current.style.height = "auto";

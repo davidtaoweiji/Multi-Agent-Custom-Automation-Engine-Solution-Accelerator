@@ -183,9 +183,10 @@ class InvoiceProcessingWorkflow:
             # Extract PDF text content
             pdf_texts = []
             if has_files:
-                for i, file_bytes in enumerate(state["images"]):
+                for i, file in enumerate(state["images"]):
+                    file_bytes = file["data"]
                     # Check if this is a PDF
-                    if file_bytes[:4] == b'%PDF':
+                    if file["content_type"] == "application/pdf":
                         try:
                             # Extract text from PDF
                             pdf_file = io.BytesIO(file_bytes)
@@ -196,6 +197,12 @@ class InvoiceProcessingWorkflow:
                         except Exception as pdf_error:
                             self.logger.error(f"Failed to extract PDF text: {pdf_error}")
                             pdf_texts.append(f"\n\n--- PDF Document {i+1} (Text extraction failed) ---\n")
+            print("checking pdf text",pdf_texts)
+            
+            # Build comprehensive prompt with PDF content
+            pdf_content_section = ""
+            if pdf_texts:
+                pdf_content_section = "\n\n=== EXTRACTED PDF TEXT CONTENT ===\n" + "".join(pdf_texts) + "\n=== END OF PDF CONTENT ===\n"
             
             # Context-aware analysis prompt
             analysis_prompt = f"""
@@ -203,29 +210,83 @@ class InvoiceProcessingWorkflow:
             
             IMPORTANT: The user may provide MULTIPLE invoices/receipts from file or text in a single request. Extract ALL of them as a list.
 
-            CONVERSATION HISTORY (includes original request and any corrections):
-            {full_context}
+            === ALREADY EXTRACTED INVOICES ===
+            {json.dumps(existing_invoices, indent=2) if existing_invoices else "None"}
 
-            Files provided: {"Yes - " + str(len(state["images"])) + " file(s) (images/PDFs)" if has_files else "No"}
-            {f"PDF text content extracted: {len(pdf_texts)} PDF document(s)" if pdf_texts else ""}
+            === USER'S LATEST MESSAGE ===
+            {latest_message}
 
-            TASK: Extract ALL invoice data from the conversation, files and PDF text content. If user provided corrections, use the corrected values.
-            If there are multiple invoices/files, return a list with all of them.
+            === FILES PROVIDED ===
+            {"Yes - " + str(len(state["images"])) + " file(s) (images/PDFs)" if has_files else "No files"}
+            {f"PDF text content extracted: {len(pdf_texts)} PDF document(s)" if pdf_texts else "No PDF content"}
+            {pdf_content_section}
+
+            === TASK INSTRUCTIONS ===
+            
+            STEP 1: DETERMINE USER INTENT
+            Analyze the user's latest message to understand their intent:
+            
+            A) MODIFICATION INTENT - User is correcting/updating existing invoice(s):
+               - Keywords: "change", "fix", "correct", "update", "modify", "should be", "actually", "wrong"
+               - Example: "change tax id to 123", "company name should be ABC", "fix the amount to 500"
+               - Action: UPDATE the corresponding field(s) in existing invoice(s), keep other fields unchanged
+            
+            B) NEW INVOICE INTENT - User is submitting new/additional invoice(s):
+               - New file(s) uploaded (PDF/images)
+               - Complete invoice information provided (tax_id, vendor, amount, date, etc.)
+               - Keywords: "new invoice", "another invoice", "also submit", "here is"
+               - Action: ADD new invoice record(s) to the array, preserve existing records
+            
+            C) AMBIGUOUS CASES:
+               - If user provides ONLY 1-2 fields without context → Likely MODIFICATION
+               - If user provides 4+ fields or complete invoice → Likely NEW INVOICE
+               - If files are uploaded → Always treat as NEW INVOICE(S)
+            
+            STEP 2: EXECUTE BASED ON INTENT
+            
+            For MODIFICATION:
+            - Keep all existing invoices in the array
+            - Only update the specific field(s) mentioned by the user
+            - Preserve all other fields from the original invoice
+            - If modifying specific invoice, identify by context (invoice number, vendor name, or position)
+            
+            For NEW INVOICE:
+            - Keep all existing invoices in the array
+            - Append new invoice(s) with complete extracted data
+            - Each new file = 1 new invoice entry
+            
+            CRITICAL RULES:
+            1. If PDF text content is provided above, you MUST extract data from it as NEW INVOICE(S)
+            2. If user uploads files, ALWAYS treat as NEW INVOICE(S), never modification
+            3. Combine information from user query AND PDF content to create complete invoice records
+            4. PDF content takes precedence for detailed fields (amounts, dates, vendor info)
+            5. When modifying, explicitly state in "message" which invoice was modified
+            
+            === DATA EXTRACTION GUIDELINES ===
             
             IMPORTANT: Each uploaded file represents a SEPARATE invoice. If you see multiple PDF documents or images, 
             extract data for EACH one as a separate entry in the array.
 
             FOR TEXT EXTRACTION, look for these patterns:
-            - Tax ID numbers (e.g., "Tax ID 123" → extract "123")
-            - Company names (e.g., "Company Name microsoft" → extract "microsoft")
-            - Vendor names (e.g., "Vendor Name KFC" → extract "KFC") 
-            - Amounts (e.g., "Amount 200" → extract 200.0)
-            - Dates (e.g., "Date 2023-10" → convert to "2023-10-01")
-            - Items/descriptions (e.g., "Items meal" → extract "meal")
+            - Tax ID numbers (e.g., "Tax ID 123", "统一社会信用代码" → extract the number)
+            - Company names (e.g., "Company Name microsoft","名稱", "公司名称" → extract company name)
+            - Vendor names (e.g., "Vendor Name KFC", "销售方" → extract vendor name) 
+            - Amounts (e.g., "Amount 200", "金额", "价税合计" → extract numerical amount)
+            - Dates (e.g., "Date 2023-10", "开票日期" → convert to "YYYY-MM-DD")
+            - Items/descriptions (e.g., "Items meal", "货物或应税劳务名称" → extract item description)
 
-            CRITICAL: Your response must be ONLY valid JSON in this exact format:
+            FOR PDF CONTENT EXTRACTION:
+            - Look for invoice number fields: "发票号码", "Invoice No", "No."
+            - Look for tax ID: "纳税人识别号", "统一社会信用代码", "Tax ID"
+            - Look for amounts: "价税合计", "Total Amount", "金额", using both Chinese and English
+            - Look for dates: "开票日期", "Date", "日期"
+            - Extract ALL visible fields even if not in standard format
+
+            === RESPONSE FORMAT ===
+            
+            CRITICAL: Your response must be ONLY valid JSON in this exact format  (notice extracted_data is an ARRAY meanning multiple invoices):
             {{
-                "message": "Successfully extracted N invoice(s)",
+                "message": "Brief status message (e.g., 'Modified invoice #1 tax_id' or 'Added 2 new invoices')",
                 "extracted_data": [
                     {{
                         "tax_id": "extracted_tax_id_or_empty_string",
@@ -241,13 +302,13 @@ class InvoiceProcessingWorkflow:
                 "success": true
             }}
 
-            IMPORTANT RULES:
-            1. Always return extracted_data as an ARRAY, even for single invoice
-            2. User corrections override previous values for the corresponding invoice
-            3. Keep values from earlier messages if not corrected
-            4. Return ONLY the JSON object, no additional text
-            5. If a field wasn't mentioned at all, use NULL for that field
-            6. Each file (image/PDF) typically represents a separate invoice - extract them all
+            FINAL RULES:
+            1. Always return extracted_data as an ARRAY containing ALL invoices (existing + new/modified)
+            2. For modifications: Update only changed fields, keep others intact
+            3. For new invoices: Append to existing array
+            4. Return ONLY the JSON object, no additional text or markdown
+            5. If a field wasn't mentioned, preserve existing value (for modifications) or use NULL (for new invoices)
+            6. The "message" field should clearly indicate whether you modified or added invoices
             """
             # Create message with unified prompt
             message_content = ChatMessageContent(
@@ -256,40 +317,6 @@ class InvoiceProcessingWorkflow:
             )
             
             # Add files if provided (images only - PDF text already extracted above)
-  
-            if has_files:
-                for i, file_bytes in enumerate(state["images"]):
-                    # Determine MIME type from file data
-                    mime_type = "image/jpeg"  # Default
-                    is_pdf = False
-                    
-                    # Try to detect content type from bytes
-                    if file_bytes[:4] == b'%PDF':
-                        mime_type = "application/pdf"
-                        is_pdf = True
-                    elif file_bytes[:4] == b'\x89PNG':
-                        mime_type = "image/png"
-                    elif file_bytes[:2] == b'\xff\xd8':
-                        mime_type = "image/jpeg"
-                    elif file_bytes[:2] == b'BM':
-                        mime_type = "image/bmp"
-                    print(f"File {i+1} detected MIME type: {mime_type}")
-                    # Only add images to message (PDF text already extracted and added to prompt)
-                    if not is_pdf:
-                        file_content = ImageContent(
-                            data=file_bytes,
-                            mime_type=mime_type
-                        )
-                        message_content.items.append(file_content)
-                        self.logger.info(f"Added image file {i+1} with MIME type: {mime_type}")
-                    else:
-                        self.logger.info(f"Skipping PDF {i+1} (text already extracted and added to prompt)")
-                
-                self.logger.info(f"Processing conversation context + {len(state['images'])} file(s) (images/PDFs)")
-            else:
-                self.logger.info(f"Processing invoice from conversation history messages")
-
-            
             response_content = ""
             async for response in self._agent.invoke(message_content):
                 if response.content:
