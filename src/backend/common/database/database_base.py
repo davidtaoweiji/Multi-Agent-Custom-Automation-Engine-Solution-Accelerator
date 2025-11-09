@@ -11,6 +11,7 @@ import v3.models.messages as messages
 from ..models.messages_kernel import (
     AgentMessageData,
     BaseDataModel,
+    Invoice,
     Plan,
     Step,
     TeamConfiguration,
@@ -231,4 +232,30 @@ class DatabaseBase(ABC):
     @abstractmethod
     async def get_agent_messages(self, plan_id: str) -> Optional[AgentMessageData]:
         """Retrieve an agent message by message_id."""
+        pass
+
+    # Invoice Operations
+    @abstractmethod
+    async def add_invoice(self, invoice: Invoice) -> None:
+        """Add an invoice reimbursement form to the database."""
+        pass
+
+    @abstractmethod
+    async def update_invoice(self, invoice: Invoice) -> None:
+        """Update an invoice in the database."""
+        pass
+
+    @abstractmethod
+    async def get_invoice_by_id(self, invoice_id: str, user_id: str) -> Optional[Invoice]:
+        """Retrieve an invoice by invoice_id and user_id."""
+        pass
+
+    @abstractmethod
+    async def get_invoices_by_user(self, user_id: str, status: Optional[str] = None) -> List[Invoice]:
+        """Retrieve all invoices for a user, optionally filtered by status."""
+        pass
+
+    @abstractmethod
+    async def get_invoices_by_manager(self, manager_id: str, status: Optional[str] = None) -> List[Invoice]:
+        """Retrieve all invoices assigned to a manager, optionally filtered by status."""
         pass

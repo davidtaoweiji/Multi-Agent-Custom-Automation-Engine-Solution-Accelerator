@@ -1,0 +1,21 @@
+INFO:azure.identity._credentials.chained:DefaultAzureCredential acquired a token from AzureCliCredential
+INFO:v3.api.simple_chat_handler:Checking team 'Invoice Team' (ID: 00000000-0000-0000-0000-000000000005) for Invoice Workflow usage
+INFO:v3.api.simple_chat_handler:✅ Found Invoice workflow agent: SimpleInvoiceAgent
+INFO:root:RAI check bypassed - returning True for development
+INFO:v3.api.simple_chat_handler:Checking team 'Invoice Team' (ID: 00000000-0000-0000-0000-000000000005) for Invoice Workflow usage
+INFO:v3.api.simple_chat_handler:✅ Found Invoice workflow agent: SimpleInvoiceAgent
+INFO:v3.api.router:� Processing 2 attached images for user 00000000-0000-0000-0000-000000000000
+INFO:v3.api.router:✅ Read image: 滴滴电子发票.pdf (80038 bytes)
+INFO:v3.api.router:✅ Read image: 滴滴电子发票.pdf (80038 bytes)
+INFO:v3.api.router:🚀 Processing Invoice Workflow: message=False, images=2
+INFO:v3.api.simple_chat_handler:🚀 Processing direct invoice workflow request for user 00000000-0000-0000-0000-000000000000
+INFO:v3.magentic_agents.invoice_workflow:✅ Invoice processing workflow initialized successfully
+INFO:v3.api.simple_chat_handler:📎 Processing 2 images with workflow
+INFO:v3.api.simple_chat_handler:📄 Starting new invoice workflow
+INFO:v3.magentic_agents.invoice_workflow:🔍 Processing invoice analysis node
+ERROR:v3.magentic_agents.invoice_workflow:❌ Error in invoice analysis: unhashable type: 'slice'
+INFO:v3.magentic_agents.invoice_workflow:📋 Processing policy verification node
+INFO:v3.magentic_agents.invoice_workflow:Policy verification completed. Violations: 1
+INFO:v3.magentic_agents.invoice_workflow:⏳ Waiting for user to provide fixes
+INFO:v3.magentic_agents.invoice_workflow:🔑 Workflow will interrupt here, waiting for user fixes
+WARNING:  StatReload detected changes in 'v3\magentic_agents\invoice_workflow.py'. Reloading...

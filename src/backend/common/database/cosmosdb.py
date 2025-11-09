@@ -13,6 +13,7 @@ from ..models.messages_kernel import (
     AgentMessageData,
     BaseDataModel,
     DataType,
+    Invoice,
     Plan,
     Step,
     TeamConfiguration,
@@ -30,6 +31,7 @@ class CosmosDBClient(DatabaseBase):
         DataType.agent_message: AgentMessage,
         DataType.team_config: TeamConfiguration,
         DataType.user_current_team: UserCurrentTeam,
+        DataType.invoice: Invoice,  # 🔄 Added Invoice mapping
     }
 
     def __init__(
@@ -491,3 +493,41 @@ class CosmosDBClient(DatabaseBase):
         ]
 
         return await self.query_items(query, parameters, AgentMessageData)
+
+    async def add_invoice(self, invoice: Invoice) -> Invoice:
+        """Add an invoice to the database."""
+        await self.add_item(invoice)
+        return invoice
+
+    async def update_invoice(self, invoice: Invoice) -> Invoice:
+        """Update an existing invoice."""
+        await self.update_item(invoice)
+        return invoice
+
+    async def get_invoice_by_id(self, invoice_id: str) -> Optional[Invoice]:
+        """Retrieve an invoice by invoice_id."""
+        query = "SELECT * FROM c WHERE c.invoice_id=@invoice_id AND c.data_type=@data_type"
+        parameters = [
+            {"name": "@invoice_id", "value": invoice_id},
+            {"name": "@data_type", "value": DataType.invoice},
+        ]
+        results = await self.query_items(query, parameters, Invoice)
+        return results[0] if results else None
+
+    async def get_invoices_by_user(self, user_id: str) -> List[Invoice]:
+        """Retrieve all invoices for a specific user."""
+        query = "SELECT * FROM c WHERE c.user_id=@user_id AND c.data_type=@data_type ORDER BY c.submitted_date DESC"
+        parameters = [
+            {"name": "@user_id", "value": user_id},
+            {"name": "@data_type", "value": DataType.invoice},
+        ]
+        return await self.query_items(query, parameters, Invoice)
+
+    async def get_invoices_by_manager(self, manager_id: str) -> List[Invoice]:
+        """Retrieve all invoices assigned to a specific manager."""
+        query = "SELECT * FROM c WHERE c.manager_id=@manager_id AND c.data_type=@data_type ORDER BY c.submitted_date DESC"
+        parameters = [
+            {"name": "@manager_id", "value": manager_id},
+            {"name": "@data_type", "value": DataType.invoice},
+        ]
+        return await self.query_items(query, parameters, Invoice)

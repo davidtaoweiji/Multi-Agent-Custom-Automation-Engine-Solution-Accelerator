@@ -35,12 +35,12 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down MACAE application...")
     try:
         # Clean up SimpleChatHandler cached agents
-        await simple_chat_handler.cleanup_agents()
+        await simple_chat_handler.clear_all_states()
         logger.info("✅ SimpleChatHandler cleanup completed successfully")
         
         # Clean up all agents from Azure AI Foundry when container stops
-        await agent_registry.cleanup_all_agents()
-        logger.info("✅ Agent registry cleanup completed successfully")
+        # await agent_registry.cleanup_all_agents()
+        # logger.info("✅ Agent registry cleanup completed successfully")
 
     except ImportError as ie:
         logger.error(f"❌ Could not import agent_registry: {ie}")

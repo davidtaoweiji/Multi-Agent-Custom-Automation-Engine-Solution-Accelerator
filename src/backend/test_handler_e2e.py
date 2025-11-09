@@ -107,9 +107,7 @@ async def test_complete_workflow_with_validation_fix():
         invoices3 = data3.get('invoices', [])
         if invoices3:
             print("📋 Final Invoice Data:")
-            for key, value in invoices3[0].items():
-                print(f"  {key}: {value}")
-            print()
+            print(invoices3)
         
         if data3.get('state') not in ['NOTIFY', 'COMPLETED']:
             print(f"❌ Expected NOTIFY/COMPLETED state but got: {data3.get('state')}")

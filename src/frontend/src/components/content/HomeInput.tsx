@@ -20,6 +20,7 @@ import { HomeInputProps, iconMap, QuickTask } from "../../models/homeInput";
 import { TaskService } from "../../services/TaskService";
 import { NewTaskService } from "../../services/NewTaskService";
 import { RAIErrorCard, RAIErrorData } from "../errors";
+import { ImageUpload, ImageFile } from "../common/ImageUpload";
 
 import ChatInput from "@/coral/modules/ChatInput";
 import InlineToaster, { useInlineToaster } from "../toast/InlineToaster";
@@ -67,6 +68,7 @@ const HomeInput: React.FC<HomeInputProps> = ({
     const [simpleChatResponse, setSimpleChatResponse] = useState<string>("");
     const [simpleChatError, setSimpleChatError] = useState<string>("");
     const [isSimpleChatMode, setIsSimpleChatMode] = useState<boolean>(false);
+    const [attachedImages, setAttachedImages] = useState<ImageFile[]>([]);
     const [chatHistory, setChatHistory] = useState<Array<{
         id: string, 
         message: string, 
@@ -91,6 +93,7 @@ const HomeInput: React.FC<HomeInputProps> = ({
     const resetTextarea = () => {
         setInput("");
         setRAIError(null); // Clear any RAI errors
+        setAttachedImages([]); // Clear attached images
         if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
             textareaRef.current.focus();
@@ -101,6 +104,22 @@ const HomeInput: React.FC<HomeInputProps> = ({
         const cleanup = NewTaskService.addResetListener(resetTextarea);
         return cleanup;
     }, []);
+
+    // Check if current team is SimpleChatAgent on mount and when team changes
+    useEffect(() => {
+        const checkTeamType = async () => {
+            try {
+                const userId = getUserInfoGlobal()?.user_id || getUserId();
+                if (userId) {
+                    const isSimpleChat = await PlanDataService.isSimpleChatTeam(userId);
+                    setIsSimpleChatMode(isSimpleChat);
+                }
+            } catch (error) {
+                console.error("Error checking team type:", error);
+            }
+        };
+        checkTeamType();
+    }, [selectedTeam]); // Re-check when team changes
 
     const handleSubmit = async () => {
         if (input.trim()) {
@@ -123,7 +142,9 @@ const HomeInput: React.FC<HomeInputProps> = ({
                     
                     try {
                         const apiService = new APIService();
-                        const response = await apiService.sendSimpleChatMessage(userMessage);
+                        // Get File objects from ImageFile array
+                        const imageFiles = attachedImages.map(img => img.file);
+                        const response = await apiService.sendSimpleChatMessage(userMessage, imageFiles);
                         
                         console.log("SimpleChatAgent response:", response);
                         
@@ -541,6 +562,15 @@ const HomeInput: React.FC<HomeInputProps> = ({
                         }}>
                             <Text size={300}>Error: {simpleChatError}</Text>
                         </div>
+                    )}
+
+                    {/* Image Upload Component - only show in SimpleChatAgent mode */}
+                    {isSimpleChatMode && (
+                        <ImageUpload 
+                            files={attachedImages}
+                            onFilesChange={setAttachedImages}
+                            maxFiles={5}
+                        />
                     )}
 
                     <ChatInput

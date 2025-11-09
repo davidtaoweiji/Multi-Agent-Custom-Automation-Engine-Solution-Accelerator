@@ -180,23 +180,26 @@ async def init_team(
 @app_v3.post("/simple_chat")
 async def simple_chat(
     request: Request,
-    message: str,
+    message: str = "",
+    images: Optional[list[UploadFile]] = File(None),
 ):
     """
-    Direct SimpleChatAgent endpoint - no plan creation, immediate response.
+    Direct Invoice Workflow endpoint - uses SimpleChatHandler with LangGraph workflow.
+    Supports multiple image attachments for invoice processing.
     
     Args:
         message: User's message/question
+        images: Optional list of image files (receipts, invoices, etc.)
         
     Returns:
-        Direct response from SimpleChatAgent
+        Direct response from Invoice Workflow
     """
     
     if not await rai_success(message):
         track_event_if_configured(
             "RAI failed",
             {
-                "status": "SimpleChatAgent request blocked - RAI check failed",
+                "status": "Invoice Workflow request blocked - RAI check failed",
                 "message": message,
             },
         )
@@ -215,25 +218,43 @@ async def simple_chat(
         raise HTTPException(status_code=400, detail="no user found")
 
     try:
-        # Check if this team uses SimpleChatAgent
+        # Check if this team uses Invoice Workflow
         is_simple_chat = await simple_chat_handler.is_simple_chat_team(user_id)
         
         if not is_simple_chat:
             raise HTTPException(
                 status_code=400, 
-                detail="Current team is not configured for SimpleChatAgent. Please switch to a SimpleChatAgent team."
+                detail="Current team is not configured for Invoice Workflow. Please switch to an Invoice Workflow team."
             )
         
-        logger.info(f"🚀 Processing direct SimpleChatAgent message for user {user_id}")
+        # Process uploaded images if any
+        image_data_list = []
+        if images:
+            logger.info(f"� Processing {len(images)} attached images for user {user_id}")
+            for img in images:
+                try:
+                    # Read image content as bytes
+                    content = await img.read()
+                    image_data_list.append({
+                        "filename": img.filename,
+                        "content_type": img.content_type,
+                        "data": content
+                    })
+                    logger.info(f"✅ Read image: {img.filename} ({len(content)} bytes)")
+                except Exception as img_error:
+                    logger.error(f"❌ Error reading image {img.filename}: {img_error}")
+        
+        logger.info(f"🚀 Processing Invoice Workflow: message={bool(message)}, images={len(image_data_list)}")
         
         # Create a minimal input task for the handler
         class SimpleInputTask:
-            def __init__(self, description: str):
+            def __init__(self, description: str, images: list = None):
                 self.description = description
+                self.images = images or []
                 self.session_id = None
                 self.team_id = None
         
-        input_task = SimpleInputTask(message)
+        input_task = SimpleInputTask(message, image_data_list)
         response_content = await simple_chat_handler.handle_invoice_workflow(user_id, input_task)
         
         return {
@@ -242,10 +263,10 @@ async def simple_chat(
         }
         
     except Exception as e:
-        logger.error(f"❌ Error in SimpleChatAgent processing: {e}")
+        logger.error(f"❌ Error in Invoice Workflow processing: {e}")
         raise HTTPException(
             status_code=500, 
-            detail=f"Error processing SimpleChatAgent request: {e}"
+            detail=f"Error processing Invoice Workflow request: {e}"
         )
 
 
@@ -254,14 +275,14 @@ async def is_simple_chat_team(
     user_id: str,
     request: Request,
 ):
-    """Check if the current user's team is configured to use SimpleChatAgent"""
+    """Check if the current user's team is configured to use Invoice Workflow"""
     
     try:
         authenticated_user = get_authenticated_user_details(
             request_headers=request.headers
         )
         
-        # Check if the team uses SimpleChatAgent
+        # Check if the team uses Invoice Workflow
         is_simple_chat = await simple_chat_handler.is_simple_chat_team(user_id)
         
         return {
@@ -432,7 +453,7 @@ async def process_request(
                 logger.error(f"❌ Error in Invoice Workflow processing: {e}")
                 raise HTTPException(
                     status_code=500, 
-                    detail=f"Error processing SimpleChatAgent request: {e}"
+                    detail=f"Error processing Invoice Workflow request: {e}"
                 )
         else:
             # Use traditional multi-agent orchestration

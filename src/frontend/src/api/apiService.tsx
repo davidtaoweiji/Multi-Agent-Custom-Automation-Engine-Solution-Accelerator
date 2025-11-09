@@ -276,13 +276,33 @@ export class APIService {
     }
 
     /**
-     * Send direct message to SimpleChatAgent (no plan creation)
+     * Send a message directly to SimpleChatAgent (Invoice Workflow)
+     * Supports multi-image attachments for invoice processing
      * @param message - User's message/question
+     * @param images - Optional array of image files to attach
      * @returns Promise with direct response from SimpleChatAgent
      */
-    async sendSimpleChatMessage(message: string): Promise<{response: string, status: string}> {
-        const params = new URLSearchParams({ message });
-        return apiClient.post(`${API_ENDPOINTS.SIMPLE_CHAT}?${params.toString()}`);
+    async sendSimpleChatMessage(
+        message: string, 
+        images?: File[]
+    ): Promise<{response: string, status: string}> {
+        // If no images, use simple query parameter
+        if (!images || images.length === 0) {
+            const params = new URLSearchParams({ message });
+            return apiClient.post(`${API_ENDPOINTS.SIMPLE_CHAT}?${params.toString()}`);
+        }
+
+        // If images are provided, use FormData
+        const formData = new FormData();
+        formData.append('message', message);
+        
+        // Append each image
+        images.forEach((image) => {
+            formData.append('images', image, image.name);
+        });
+
+        // Send as multipart/form-data using upload method
+        return apiClient.upload(API_ENDPOINTS.SIMPLE_CHAT, formData);
     }
 
     /**

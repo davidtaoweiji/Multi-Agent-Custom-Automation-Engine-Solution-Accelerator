@@ -1,4 +1,22 @@
-"""Simple chat handler for LangGraph Invoice Workflow processing."""
+"""Simple chat handler for LangGraph Invoice Workflow processing.
+
+RECOMMENDED APPROACH for invoice workflow:
+This handler uses InvoiceProcessingWorkflow (LangGraph-based) which provides:
+- Proper state management with interrupt/resume semantics
+- Multi-round conversation support with history awareness
+- Policy validation and fix cycles
+- Automatic database persistence to Cosmos DB
+
+Advantages over SimpleChatAgent:
+- LangGraph provides deterministic workflow control
+- State is properly managed across conversation turns
+- Supports complex multi-step processes with validation
+- Easier to test and maintain
+
+Usage:
+- Direct API: POST /v3/simple_chat with message parameter
+- The handler automatically detects invoice workflow teams and routes requests
+"""
 
 import asyncio
 import logging
@@ -69,7 +87,7 @@ class SimpleChatHandler:
         
         Args:
             user_id: The user ID
-            input_task: The input task with user's message
+            input_task: The input task with user's message and optional images
             
         Returns:
             Complete response string as JSON
@@ -82,6 +100,10 @@ class SimpleChatHandler:
                 await self._invoice_workflow.initialize()
             
             user_message = input_task.description
+            images = getattr(input_task, 'images', None)  # Get images if available
+            
+            if images:
+                self.logger.info(f"📎 Processing {len(images)} images with workflow")
             
             # Check if user has an existing workflow state
             user_key = f"workflow_{user_id}"
@@ -127,11 +149,11 @@ class SimpleChatHandler:
                 # New invoice processing request
                 self.logger.info(f"📄 Starting new invoice workflow")
                 
-                # Process through complete workflow
+                # Process through complete workflow with images
                 result_state = await self._invoice_workflow.process_invoice_workflow(
                     user_id=user_id,
                     user_message=user_message,
-                    images=None  # TODO: Add image support if needed
+                    images=images  # Pass images to workflow
                 )
                 
                 # Store state for potential follow-up
@@ -156,6 +178,58 @@ class SimpleChatHandler:
                 "invoices": []
             }
             return json.dumps(error_response)
+    
+    def clear_user_state(self, user_id: str) -> bool:
+        """
+        Clear stored workflow state for a specific user.
+        
+        Args:
+            user_id: The user ID whose state should be cleared
+            
+        Returns:
+            True if state was cleared, False if no state existed
+        """
+        user_key = f"workflow_{user_id}"
+        if user_key in self._workflow_states:
+            del self._workflow_states[user_key]
+            self.logger.info(f"🗑️ Cleared workflow state for user {user_id}")
+            return True
+        else:
+            self.logger.info(f"ℹ️ No workflow state found for user {user_id}")
+            return False
+    
+    def clear_all_states(self) -> int:
+        """
+        Clear all stored workflow states for all users.
+        
+        Returns:
+            Number of states that were cleared
+        """
+        count = len(self._workflow_states)
+        self._workflow_states.clear()
+        self.logger.info(f"🗑️ Cleared all workflow states ({count} users)")
+        return count
+    
+    def get_active_users(self) -> list:
+        """
+        Get list of user IDs with active workflow states.
+        
+        Returns:
+            List of user IDs
+        """
+        return [key.replace("workflow_", "") for key in self._workflow_states.keys()]
+    
+    async def reset_workflow(self, user_id: str) -> None:
+        """
+        Reset the workflow instance (reinitialize).
+        Useful for clearing any cached state in the workflow itself.
+        
+        Args:
+            user_id: The user ID (for logging purposes)
+        """
+        self.logger.info(f"🔄 Resetting workflow instance for user {user_id}")
+        self._invoice_workflow = InvoiceProcessingWorkflow()
+        self.logger.info(f"✅ Workflow instance reset complete")
             
     def _create_json_response(self, workflow_state: Dict) -> Dict:
         """Create standardized JSON response from workflow state."""

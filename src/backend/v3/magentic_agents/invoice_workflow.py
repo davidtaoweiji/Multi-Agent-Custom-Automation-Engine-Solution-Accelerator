@@ -8,6 +8,9 @@ from typing import List, Optional, Dict, Any, TypedDict, Annotated
 from datetime import datetime, timedelta
 import json
 import asyncio
+import uuid
+import io
+import pypdf
 
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
@@ -19,6 +22,8 @@ from semantic_kernel.contents.chat_history import ChatHistory
 from langchain_core.messages import HumanMessage
 
 from common.config.app_config import config
+from common.database.database_factory import DatabaseFactory
+from .models.data_models import Invoice, InvoiceStatus
 
 
 class InvoiceWorkflowState(TypedDict):
@@ -173,22 +178,42 @@ class InvoiceProcessingWorkflow:
                     break
 
             full_context = f"Existing Invoice Data: {json.dumps(existing_invoices)}\n\nLatest User Message: {latest_message}"
-            # Check if we have images
-            has_images = state.get("images") and len(state["images"]) > 0
-
+            # Check if we have images or PDFs
+            has_files = state.get("images") and len(state["images"]) > 0
+            # Extract PDF text content
+            pdf_texts = []
+            if has_files:
+                for i, file_bytes in enumerate(state["images"]):
+                    # Check if this is a PDF
+                    if file_bytes[:4] == b'%PDF':
+                        try:
+                            # Extract text from PDF
+                            pdf_file = io.BytesIO(file_bytes)
+                            pdf_reader = pypdf.PdfReader(pdf_file)
+                            pdf_text = "\n".join(page.extract_text() for page in pdf_reader.pages)
+                            pdf_texts.append(f"\n\n--- PDF Document {i+1} Content for Invoice {i+1} ---\n{pdf_text}\n--- End of PDF Document {i+1} ---\n")
+                            self.logger.info(f"Extracted {len(pdf_text)} characters from PDF {i+1}")
+                        except Exception as pdf_error:
+                            self.logger.error(f"Failed to extract PDF text: {pdf_error}")
+                            pdf_texts.append(f"\n\n--- PDF Document {i+1} (Text extraction failed) ---\n")
+            
             # Context-aware analysis prompt
             analysis_prompt = f"""
             You are an expert invoice processing agent. You must extract structured data from the conversation history.
             
-            IMPORTANT: The user may provide MULTIPLE invoices/receipts in a single request. Extract ALL of them as a list.
+            IMPORTANT: The user may provide MULTIPLE invoices/receipts from file or text in a single request. Extract ALL of them as a list.
 
             CONVERSATION HISTORY (includes original request and any corrections):
             {full_context}
 
-            Images provided: {"Yes - " + str(len(state["images"])) + " image(s)" if has_images else "No"}
+            Files provided: {"Yes - " + str(len(state["images"])) + " file(s) (images/PDFs)" if has_files else "No"}
+            {f"PDF text content extracted: {len(pdf_texts)} PDF document(s)" if pdf_texts else ""}
 
-            TASK: Extract ALL invoice data from the conversation. If user provided corrections, use the corrected values.
-            If there are multiple invoices/images, return a list with all of them.
+            TASK: Extract ALL invoice data from the conversation, files and PDF text content. If user provided corrections, use the corrected values.
+            If there are multiple invoices/files, return a list with all of them.
+            
+            IMPORTANT: Each uploaded file represents a SEPARATE invoice. If you see multiple PDF documents or images, 
+            extract data for EACH one as a separate entry in the array.
 
             FOR TEXT EXTRACTION, look for these patterns:
             - Tax ID numbers (e.g., "Tax ID 123" → extract "123")
@@ -197,8 +222,6 @@ class InvoiceProcessingWorkflow:
             - Amounts (e.g., "Amount 200" → extract 200.0)
             - Dates (e.g., "Date 2023-10" → convert to "2023-10-01")
             - Items/descriptions (e.g., "Items meal" → extract "meal")
-
-            {"FOR IMAGE ANALYSIS: Analyze ALL uploaded images for invoice details. Each image may be a separate invoice." if has_images else ""}
 
             CRITICAL: Your response must be ONLY valid JSON in this exact format:
             {{
@@ -224,7 +247,7 @@ class InvoiceProcessingWorkflow:
             3. Keep values from earlier messages if not corrected
             4. Return ONLY the JSON object, no additional text
             5. If a field wasn't mentioned at all, use NULL for that field
-            6. Each image typically represents a separate invoice - extract them all
+            6. Each file (image/PDF) typically represents a separate invoice - extract them all
             """
             # Create message with unified prompt
             message_content = ChatMessageContent(
@@ -232,18 +255,39 @@ class InvoiceProcessingWorkflow:
                 items=[TextContent(text=analysis_prompt)]
             )
             
-            # Add images if provided
-            if has_images:
-                for i, image_bytes in enumerate(state["images"]):
-                    image_content = ImageContent(
-                        data=image_bytes,
-                        mime_type="image/jpeg"
-                    )
-                    message_content.items.append(image_content)
+            # Add files if provided (images only - PDF text already extracted above)
+  
+            if has_files:
+                for i, file_bytes in enumerate(state["images"]):
+                    # Determine MIME type from file data
+                    mime_type = "image/jpeg"  # Default
+                    is_pdf = False
+                    
+                    # Try to detect content type from bytes
+                    if file_bytes[:4] == b'%PDF':
+                        mime_type = "application/pdf"
+                        is_pdf = True
+                    elif file_bytes[:4] == b'\x89PNG':
+                        mime_type = "image/png"
+                    elif file_bytes[:2] == b'\xff\xd8':
+                        mime_type = "image/jpeg"
+                    elif file_bytes[:2] == b'BM':
+                        mime_type = "image/bmp"
+                    print(f"File {i+1} detected MIME type: {mime_type}")
+                    # Only add images to message (PDF text already extracted and added to prompt)
+                    if not is_pdf:
+                        file_content = ImageContent(
+                            data=file_bytes,
+                            mime_type=mime_type
+                        )
+                        message_content.items.append(file_content)
+                        self.logger.info(f"Added image file {i+1} with MIME type: {mime_type}")
+                    else:
+                        self.logger.info(f"Skipping PDF {i+1} (text already extracted and added to prompt)")
                 
-                self.logger.info(f"Processing conversation context + {len(state['images'])} image(s)")
+                self.logger.info(f"Processing conversation context + {len(state['images'])} file(s) (images/PDFs)")
             else:
-                self.logger.info(f"Processing invoice from conversation history messages)")
+                self.logger.info(f"Processing invoice from conversation history messages")
 
             
             response_content = ""
@@ -251,6 +295,7 @@ class InvoiceProcessingWorkflow:
                 if response.content:
                     response_content += str(response.content)
             # Parse JSON response strictly
+            print("Raw invoice analysis response:",response_content)
             try:
                 json_response = json.loads(response_content.strip())
                 
@@ -450,6 +495,10 @@ class InvoiceProcessingWorkflow:
             # Simulate saving to database
             for invoice_data in extracted_data_list:
                 if not invoice_data.get("parsing_error"):
+                    # Add user_id and other metadata to invoice data
+                    invoice_data["user_id"] = state.get("user_id", "")
+                    invoice_data["workflow_session_id"] = state.get("session_id")
+                    invoice_data["team_id"] = state.get("team_id")
                     await self._save_reimbursement_form(invoice_data)
             
             success_message = f"✅ Reimbursement request with {total_invoices} invoice(s) (${total_amount:.2f}) submitted successfully for manager approval"
@@ -503,10 +552,49 @@ class InvoiceProcessingWorkflow:
             return "wait_for_confirmation"
     
     async def _save_reimbursement_form(self, form_data: Dict[str, Any]):
-        """Mock function to save reimbursement form to database."""
-        # This would integrate with your actual database
-        self.logger.info(f"💾 Saving reimbursement form {form_data.get('form_id')} to database")
-        await asyncio.sleep(0.1)  # Simulate database operation
+        """Save reimbursement form to Cosmos DB."""
+        try:
+            # Get database instance
+            db = await DatabaseFactory.get_database()
+            
+            # Generate form_id if not present
+            form_id = form_data.get("form_id") or form_data.get("invoice_number") or str(uuid.uuid4())
+            
+            # Convert items to string if it's a list
+            items_data = form_data.get("items", "")
+            if isinstance(items_data, list):
+                items_str = ", ".join(str(item) for item in items_data)
+            else:
+                items_str = str(items_data) if items_data else ""
+            
+            # Create Invoice object
+            invoice = Invoice(
+                data_type="invoice",
+                invoice_id=form_id,
+                user_id=form_data.get("user_id", ""),
+                manager_id=form_data.get("user_id"),  # demo purpose- should actually be manager Id in prod
+                tax_id=form_data.get("tax_id", ""),
+                company_name=form_data.get("company_name", ""),
+                vendor_name=form_data.get("vendor_name", ""),
+                invoice_date=form_data.get("invoice_date", ""),
+                total_amount=float(form_data.get("total_amount", 0.0)),
+                items=items_str,
+                invoice_number=form_data.get("invoice_number", ""),
+                currency=form_data.get("currency", "TWD"),
+                status=InvoiceStatus.pending,
+                submitted_date=datetime.now().isoformat(),
+                team_id=form_data.get("team_id"),
+                workflow_session_id=form_data.get("workflow_session_id"),
+                notes=form_data.get("notes")
+            )
+            
+            # Save to database
+            saved_invoice = await db.add_invoice(invoice)
+            self.logger.info(f"💾 Saved invoice {invoice.invoice_id} to Cosmos DB - Status: {invoice.status}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to save invoice to database: {str(e)}")
+            raise
     
     async def process_invoice_workflow(
         self, 
