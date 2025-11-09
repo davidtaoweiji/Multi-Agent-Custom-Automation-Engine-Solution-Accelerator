@@ -171,7 +171,7 @@ const HomeInput: React.FC<HomeInputProps> = ({
                                 } else if (jsonResponse.type === "update" && jsonResponse.data && Array.isArray(jsonResponse.data)) {
                                     // Update response - show operation results  
                                     const updateData = jsonResponse.data;
-                                    const successCount = updateData.filter((item: any) => item.new_status).length;
+                                    const successCount = jsonResponse.data.length;
                                     displayResponse = `Successfully processed ${successCount} invoice(s)`;
                                     console.log("Found update response with results:", updateData);
                                 } else {
@@ -904,8 +904,8 @@ const HomeInput: React.FC<HomeInputProps> = ({
 
                     <InlineToaster />
 
-                    {/* Quick tasks section - only show when not in SimpleChatAgent mode */}
-                    {!isSimpleChatMode && (
+                    {/* Quick tasks section - only show when not in SimpleChatAgent mode and not in Manager mode */}
+                    {!isSimpleChatMode && !isManagerMode && (
                         <div className="home-input-quick-tasks-section">
                             {tasksToDisplay.length > 0 && (
                                 <>

@@ -27,6 +27,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from pydantic import BaseModel
 from v3.common.services.plan_service import PlanService
 from v3.common.services.team_service import TeamService
 from v3.config.settings import (
@@ -37,6 +38,10 @@ from v3.config.settings import (
 from v3.orchestration.orchestration_manager import OrchestrationManager
 from v3.api.simple_chat_handler import SimpleChatHandler
 from v3.magentic_agents.invoice_manager_agent import InvoiceManagerAgent
+
+# Pydantic models for request/response
+class ManagerChatRequest(BaseModel):
+    message: str
 
 # Global instance for agent caching and reuse
 simple_chat_handler = SimpleChatHandler()
@@ -197,7 +202,8 @@ async def simple_chat(
     Returns:
         Direct response from Invoice Workflow
     """
-    
+    print("let's first check inputs",message)
+    print("length of images", len(images) if images else 0)
     if not await rai_success(message):
         track_event_if_configured(
             "RAI failed",
@@ -276,7 +282,7 @@ async def simple_chat(
 @app_v3.post("/manager_chat")
 async def manager_chat(
     request: Request,
-    message: str = "",
+    chat_request: ManagerChatRequest,
 ):
     """
     Manager Invoice Query endpoint - handles manager queries for pending invoices 
@@ -289,7 +295,7 @@ async def manager_chat(
     - Function calling for database operations
     
     Args:
-        message: Manager's query or command
+        chat_request: Manager's query or command in JSON format
         
     Returns:
         JSON response with invoice data or operation results
@@ -299,6 +305,7 @@ async def manager_chat(
         - "Approve invoice INV-001"
         - "Reject invoice INV-002 because the amount exceeds limit"
     """
+    message = chat_request.message
     
     if not await rai_success(message):
         track_event_if_configured(

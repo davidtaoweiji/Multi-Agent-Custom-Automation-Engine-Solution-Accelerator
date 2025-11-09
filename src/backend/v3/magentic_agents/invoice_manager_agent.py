@@ -27,33 +27,17 @@ class InvoiceManagerPlugin:
     
     @kernel_function(
         name="query_pending_invoices",
-        description="Query all pending invoices that require this manager's approval. Returns list of invoices with details including invoice_id, user_id, vendor, amount, date, and items. Supports pagination with page (default 1) and page_size (default 10) parameters."
+        description="Query all pending invoices that require this manager's approval. Returns list of invoices with details including invoice_id, user_id, vendor, amount, date, and items."
     )
     async def query_pending_invoices(
         self,
-        page: Annotated[int, "Page number to retrieve (starts from 1)"] = 1,
-        page_size: Annotated[int, "Number of invoices per page"] = 10
     ) -> Annotated[str, "List of pending invoices requiring approval"]:
         """
-        Query all unapproved invoices where current user is the manager.
-        
-        Args:
-            page: Page number (default: 1, starts from 1)
-            page_size: Number of invoices per page (default: 10)
-        
+        Query all unapproved invoices where current user is the manager.    
         Returns:
             JSON string with list of pending invoices and pagination info
         """
         try:
-            self.logger.info(f"🔍 Manager {self.manager_id} querying pending invoices (page {page}, size {page_size})")
-            # Validate pagination parameters
-            if page < 1:
-                page = 1
-            if page_size < 1:
-                page_size = 10
-            if page_size > 100:  # Maximum page size limit
-                page_size = 100
-            
             # Get database instance
             db = await DatabaseFactory.get_database()
             
@@ -69,30 +53,14 @@ class InvoiceManagerPlugin:
             print(f"Found {len(pending_invoices)} pending invoices for manager '{self.manager_id}': {pending_invoices}")
             # Calculate pagination
             total_invoices = len(pending_invoices)
-            total_pages = (total_invoices + page_size - 1) // page_size  # Ceiling division
-            
-            # Get invoices for current page
-            start_idx = (page - 1) * page_size
-            end_idx = start_idx + page_size
-            page_invoices = pending_invoices[start_idx:end_idx]
-            
-            if not page_invoices and total_invoices > 0:
-                return f"Page {page} is out of range. Total pages: {total_pages}"
-            
-            if not pending_invoices:
-                return "No pending invoices found requiring your approval."
-            
+
             # Format response
             result = {
                 "total_pending": total_invoices,
-                "page": page,
-                "page_size": page_size,
-                "total_pages": total_pages,
-                "showing": len(page_invoices),
                 "invoices": []
             }
             
-            for inv in page_invoices:
+            for inv in pending_invoices:
                 result["invoices"].append({
                     "invoice_id": inv.invoice_id,
                     "user_id": inv.user_id,
@@ -107,9 +75,8 @@ class InvoiceManagerPlugin:
                     "invoice_number": inv.invoice_number,
                     "status": inv.status
                 })
-            
 
-            self.logger.info(f"✅ Found {total_invoices} pending invoice(s), showing page {page} ({len(page_invoices)} invoices)")
+            self.logger.info(f"✅ fetched: {total_invoices} invoices successfully")
             return json.dumps(result, indent=2)
             
         except Exception as e:
@@ -274,23 +241,27 @@ class InvoiceManagerAgent:
             1. Query pending invoices that require this manager's approval
             2. Update invoice status to approved or rejected with optional rejection reason
 
-            **Context Guidelines:**
-            - For QUERY operations: Always use the query_pending_invoices function to get fresh data from database. Ignore any previously extracted invoices.
-            - For UPDATE operations: Reference the previously extracted invoices below when user mentions "first invoice", "invoice from vendor X", etc.
+            **Processing Steps:**
+            1.analyze the user's request and pick one of the following intents:
+                - QUERY Intent - Use query_pending_invoices function when user asks to see/show/list/query pending invoices or uses phrases like: "query","show me", "list", "what invoices", "pending invoices", "invoices to review"
+                - UPDATE Intent - Use update_invoice_status function when user wants to approve/reject invoice(s) or uses phrases like: "approve invoice", "reject invoice", "update status", "accept", "deny"
+            2. Select appropriate tool based on intent
+            3. Execute the tool with proper parameters
+            4. Format response according to JSON structure below
+           
+            **Context Management:**
+            - For QUERY operations: Fresh invoice data is extracted and stored for reference
+            - For UPDATE operations: Previously extracted invoices are used for reference, then cleared after successful update
+            - Use previously extracted invoices when user mentions "first invoice", "invoice from vendor X", "the invoice with amount Y", etc.
 
             **Previously Extracted Invoices (for UPDATE reference only):**
-            {json.dumps(self.extracted_invoice, indent=2) if self.extracted_invoice else "No invoice data extracted yet."}
-
-            **Guidelines:**
-            - Always verify invoice details before approving
-            - Be professional and helpful
-            - When user asks to see pending invoices, use the query_pending_invoices function
-            - When user wants to approve/reject an invoice, use the update_invoice_status function
-            - Always confirm the action after updating an invoice status
+            {json.dumps(self.extracted_invoice, indent=2) if self.extracted_invoice else "No invoice data extracted yet. Please query invoices first."}
 
             **IMPORTANT: Response format:**
             - You MUST always return a valid JSON object
             - Never return plain text responses
+            - Be clear, concise, and professional in the response structure
+            - Always include relevant invoice details in the data field
             - Use this JSON structure:
             {{
                 "status": "success" or "error",
@@ -313,9 +284,7 @@ class InvoiceManagerAgent:
                 ]
             }}
 
-            - For queries, include the complete invoice list in the "data" field
-            - For updates, include confirmation details for each processed invoice in the "data" field
-            - Be clear, concise, and professional in the response structure
+
             """
             
             self._agent = ChatCompletionAgent(
@@ -373,6 +342,13 @@ class InvoiceManagerAgent:
                     # Store the invoice data for future reference
                     self.extracted_invoice = response_json["data"]
                     self.logger.info(f"📋 Extracted {len(self.extracted_invoice)} invoice(s) from query response")
+                    
+                elif (response_json.get("type") == "update" and 
+                      response_json.get("status") == "success"):
+                    
+                    # Clear extracted invoice data after successful update
+                    self.extracted_invoice = None
+                    self.logger.info(f"🧹 Cleared extracted invoice data after successful update")
                     
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 self.logger.warning(f"⚠️ Could not parse response as JSON or extract invoice data: {e}")

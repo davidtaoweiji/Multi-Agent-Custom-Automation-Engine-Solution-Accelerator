@@ -331,9 +331,7 @@ export class APIService {
      * @returns Promise with the response
      */
     async sendManagerChatMessage(message: string): Promise<{response: string, status: string, manager_id: string}> {
-        const formData = new FormData();
-        formData.append('message', message);
-        return apiClient.upload('/v3/manager_chat', formData);
+        return apiClient.post('/v3/manager_chat', { message });
     }
 }
 

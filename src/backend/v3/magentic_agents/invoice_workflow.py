@@ -347,6 +347,7 @@ class InvoiceProcessingWorkflow:
             state["messages"] = state.get("messages", []) + [
                 {"role": "assistant", "content": status_message}
             ]
+            state["images"] = None  # Clear images after processing
             self.logger.info("✅ Invoice analysis completed successfully")
             return state
             
